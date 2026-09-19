@@ -961,6 +961,86 @@ function drawStar(x, y, r, col){
   ctx.restore();
 }
 
+/* ============================================================
+   桌面小物件：咖啡杯 / 文件 / 笔记本
+   俯视角看下去，桌面上只有一道横线太寡淡了。
+   ============================================================ */
+function drawDeskProp(x, y, kind, sc){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
+
+  if(kind === 'cup'){
+    // 咖啡杯：俯视看到的是杯口那一圈 + 里面的液面
+    ctx.fillStyle = '#F7F5EF';
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#B4B0A2'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#5E4126';
+    ctx.beginPath(); ctx.arc(0.4, 0, 5.1, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.38)';
+    ctx.beginPath(); ctx.ellipse(-1.7, -1.9, 1.9, 1.2, -0.6, 0, Math.PI*2); ctx.fill();
+  }
+
+  else if(kind === 'paper'){
+    // 一叠文件，斜着摊在桌上
+    ctx.rotate(-0.22);
+    ctx.fillStyle = '#E3E0D4';
+    roundRect(-7, -8.5, 14, 17, 1.6); ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#BDB9AA'; ctx.lineWidth = 0.9;
+    roundRect(-7, -10, 14, 17, 1.6); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#C9C6BB'; ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-4.4, -5.6); ctx.lineTo(4.4, -5.6);
+    ctx.moveTo(-4.4, -2.2); ctx.lineTo(4.4, -2.2);
+    ctx.moveTo(-4.4,  1.2); ctx.lineTo(1.6,  1.2);
+    ctx.stroke();
+  }
+
+  else if(kind === 'laptop'){
+    // 笔记本：机身 + 亮着的屏幕
+    ctx.fillStyle = '#3A4048';
+    roundRect(-11, -8, 22, 16, 2); ctx.fill();
+    ctx.fillStyle = '#6FA8DC';
+    roundRect(-8.4, -5.6, 16.8, 11.2, 1.4); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.42)';
+    roundRect(-7.4, -4.6, 4.6, 9.2, 1); ctx.fill();
+  }
+
+  else if(kind === 'box'){
+    // 快递纸箱
+    ctx.fillStyle = '#C9A876';
+    roundRect(-8, -7, 16, 14, 1.6); ctx.fill();
+    ctx.strokeStyle = '#9A7C4E'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = '#9A7C4E'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(0, 7); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// 按家具类型往桌面上摆东西。用坐标做确定性种子，免得每帧抖动
+function dressSurface(c){
+  const seed = Math.abs(Math.floor(c.x*7 + c.y*13));
+  const lab = c.label || '';
+  let pool, count;
+  if(lab === '文件柜'){ pool = ['paper','paper','box']; count = 3; }
+  else if(lab === '前台'){ pool = ['paper','cup','paper']; count = 3; }
+  else if(lab === '咖啡机'){ pool = ['cup','cup']; count = 2; }
+  else if(lab === '沙发' || lab === '休息区'){ pool = ['cup','paper']; count = 1; }
+  else if(lab === '快递架'){ pool = ['box']; count = 1; }
+  else { pool = ['cup','paper','laptop','paper','cup','laptop']; count = c.w > 150 ? 3 : 2; }
+
+  for(let i=0;i<count;i++){
+    const t = (i + 0.5) / count;
+    const jx = ((seed >> i) % 9) - 4;
+    const jy = ((seed >> (i+3)) % 7) - 3;
+    const px = c.x + c.w*t + jx;
+    const py = c.y + c.h*0.5 + jy;
+    drawDeskProp(px, py, pool[(seed + i*3) % pool.length], c.w < 90 ? 0.7 : 1.02);
+  }
+}
+
 function drawConfront(){
   const n = confront.npc;
   if(!n) return;
@@ -1185,9 +1265,10 @@ function draw(){
     }
     if(c.t==='plant'){
       ctx.fillStyle = 'rgba(59,109,17,.20)';
-      ctx.beginPath();
-      ctx.arc(c.x+c.w/2, c.y+c.h/2, 13, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(c.x+c.w/2, c.y+c.h/2, 13, 0, Math.PI*2); ctx.fill();
     }
+    // 桌面上的东西（咖啡杯 / 文件 / 笔记本）
+    dressSurface(c);
   }
 
   /* 打卡机（终点）：屏幕上直接写「下班打卡」，玩家一眼就知道往哪走 */
