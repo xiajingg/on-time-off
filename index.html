@@ -97,7 +97,11 @@
         </p>
         <p style="margin-top:6px;">
           身体进红区，头顶会冒 <b>？</b> 开始积累警觉条；<b>走出去警觉回落，还能救回来</b>。
-          警觉条满、或者凉透了撞上人 → 当场加班。
+          警觉条满、或者凉透了撞上人 → 被叫住。
+        </p>
+        <p style="margin-top:6px;">
+          <b>但每局有一次「掀桌子」</b>：被叫住的瞬间，抄起键盘把对方打躺，
+          他 16 秒起不来，你扣 8 秒。只此一次 —— 第二次就是真的加班了。
         </p>
         <h2>这一版要验证的事</h2>
         <p>
@@ -377,8 +381,19 @@ function roomOf(x,y){
 /* ============================================================
    状态
    ============================================================ */
-let state = 'menu';      // menu | playing | caught | escaped
+let state = 'menu';      // menu | playing | confront | caught | escaped
 let bestUsed = null;   // 本次会话最快通关
+
+/* ---------- 「掀桌子」：每局一次的翻盘机会 ----------
+   设计意图：现在第 4/5 局通关率只有 13%，太劝退；但直接送一条命会把张力抹平。
+   所以做成「拿时间换的」：反击成功扣 8 秒，且每局只有一次。
+   这样第一次犯错是可救的，第二次就是真的。 */
+let counter = 1;                     // 本局还剩几次
+const CONFRONT_WINDOW = 4.0;         // 选择窗口（秒）
+const CONFRONT_COST   = 8;           // 反击成功扣掉的时间（秒）
+const KNOCKOUT_TIME   = 16;          // 被打倒的人躺多久
+const confront = { t:0, phase:'ask', npc:null, line:'', hitT:0 };
+let invuln = 0;                      // 反击后短暂无敌，防止刚爬起来又被抓
 let round = 1;
 let timeLeft = ROUND_TIME;
 let elapsed = 0;
@@ -411,7 +426,7 @@ function buildRound(){
 
     n.idx = Math.random() < 0.5 ? 0 : 1;   // 朝哪一端走
     n.state = 'move'; n.wait = 0;
-    n.alert = 0; n.seen = false;
+    n.alert = 0; n.seen = false; n.down = 0;
 
     const t = n.path[n.idx];
     const dx=t.x-n.x, dy=t.y-n.y, L=Math.hypot(dx,dy)||1;
@@ -422,6 +437,8 @@ function buildRound(){
 
 function resetRun(){
   timeLeft = roundTime; elapsed = 0;
+  counter = 1; invuln = 0;                 // 掀桌子每局重置一次
+  confront.npc = null; confront.phase = 'ask'; confront.t = CONFRONT_WINDOW;
   player.x = SPAWN.x; player.y = SPAWN.y;
   player.dir = {x:0,y:-1}; player.moving=false; player.running=false;
   shake=0; flashVignette=0;
@@ -434,6 +451,8 @@ function resetRun(){
    ============================================================ */
 function updateNpc(n, dt){
   n.phase = n.phase || 0;
+  // 被打倒期间：躺平，不动也不看
+  if(n.down > 0){ n.down -= dt; n.phase *= 0.88; return; }
   if(n.state === 'pause'){
     n.wait -= dt;
     n.phase *= 0.86;                       // 站住时停摆
@@ -458,6 +477,7 @@ function updateNpc(n, dt){
 
 // 该 NPC 此刻能否看见玩家
 function canSee(n){
+  if(n.down > 0) return false;                                          // 躺平中，看不见任何东西
   if(roomOf(n.x,n.y) !== roomOf(player.x,player.y)) return false;      // 墙挡视线
   const dx = player.x-n.x, dy = player.y-n.y;
   const dist = Math.hypot(dx,dy);
@@ -473,9 +493,11 @@ function canSee(n){
    主更新
    ============================================================ */
 function update(dt){
+  if(state === 'confront'){ updateConfront(dt); return; }
   if(state !== 'playing') return;
 
   elapsed += dt;
+  invuln = Math.max(0, invuln - dt);
   timeLeft -= dt;
   if(timeLeft <= 0){ timeLeft = 0; finish(false, null, '时间到'); return; }
 
@@ -520,7 +542,7 @@ function update(dt){
     updateNpc(n, dt);
 
     const sees = canSee(n);
-    const noisy = player.running && !sees &&
+    const noisy = n.down <= 0 && player.running && !sees &&
                   roomOf(n.x,n.y) === roomOf(player.x,player.y) &&
                   Math.hypot(player.x-n.x, player.y-n.y) < P.noiseR;
 
@@ -535,12 +557,12 @@ function update(dt){
     n.alert = clamp(n.alert, 0, 1);
     maxAlert = Math.max(maxAlert, n.alert);
 
-    if(n.alert >= 1){ finish(false, n, '被发现'); return; }
+    if(n.alert >= 1 && invuln <= 0){ finish(false, n, '被发现'); return; }
   }
 
   // 撞上身体 = 立即加班
-  for(const n of npcs){
-    if(Math.hypot(player.x-n.x, player.y-n.y) < 26){ finish(false, n, '撞上了'); return; }
+  if(invuln <= 0) for(const n of npcs){
+    if(n.down <= 0 && Math.hypot(player.x-n.x, player.y-n.y) < 26){ finish(false, n, '撞上了'); return; }
   }
 
   /* --- 到打卡机 --- */
@@ -564,6 +586,67 @@ function joystickMagnitudeScale(){
    结算
    ============================================================ */
 function finish(win, npc, reason){
+  // 被抓、而且手里还有存货 → 先进「掀桌子」场景，而不是直接结算
+  if(!win && npc && counter > 0){ startConfront(npc, reason); return; }
+  settle(win, npc, reason);
+}
+
+/* ============================================================
+   「掀桌子」场景
+   被抓的瞬间时间冻结，对方开口说台词，你有 4 秒决定要不要动手。
+   动手 → 他躺 16 秒，你减 8 秒；不动手 → 加班结算。
+   ============================================================ */
+function startConfront(npc, reason){
+  state = 'confront';
+  confront.t = CONFRONT_WINDOW;
+  confront.phase = 'ask';
+  confront.npc = npc;
+  confront.line = rnd(LINES[npc.kind]);
+  confront.hitT = 0;
+  keysDown.clear();
+  joy.active = false; joy.id = null; joy.mag = 0;
+  runBtn.active = false;
+}
+
+function updateConfront(dt){
+  // 挥完了，结算
+  if(confront.phase === 'hit'){
+    confront.hitT += dt;
+    if(confront.hitT < 1.15) return;
+
+    const n = confront.npc;
+    n.down = KNOCKOUT_TIME;
+    n.alert = 0;
+    timeLeft = Math.max(0, timeLeft - CONFRONT_COST);
+
+    // 把玩家推开一点 + 短暂无敌：免得刚打完又被旁边的人抓
+    const a = Math.atan2(player.y-n.y, player.x-n.x);
+    const px = player.x + Math.cos(a)*48, py = player.y + Math.sin(a)*48;
+    if(walkable(px, player.y)) player.x = px;
+    if(walkable(player.x, py)) player.y = py;
+    invuln = 1.4;
+
+    confront.npc = null;
+    confront.phase = 'ask';
+    state = 'playing';
+    if(timeLeft <= 0){ timeLeft = 0; settle(false, null, '时间到'); }
+    return;
+  }
+
+  // 还在等玩家决定
+  confront.t -= dt;
+  if(confront.t <= 0) settle(false, confront.npc, '被叫住了');
+}
+
+// 玩家动手了
+function swingTool(){
+  if(state !== 'confront' || confront.phase !== 'ask' || !confront.npc) return;
+  confront.phase = 'hit';
+  confront.hitT = 0;
+  counter--;
+}
+
+function settle(win, npc, reason){
   state = win ? 'escaped' : 'caught';
   const used = roundTime - timeLeft;
   if(win && (bestUsed === null || used < bestUsed)) bestUsed = used;
@@ -671,7 +754,7 @@ function drawPerson(x, y, dx, dy, art, opt){
   ctx.fill();
 
   ctx.translate(0, bob);
-  ctx.rotate(ang + sway);
+  ctx.rotate(ang + sway + (opt.tilt || 0));
 
   // ---------- 背包（贴在背后 = 本地 -x）----------
   if(opt.item === 'backpack'){
@@ -846,6 +929,164 @@ function drawHeldItem(item, ang){
   ctx.restore();
 }
 
+
+/* ============================================================
+   「掀桌子」场景绘制
+   ============================================================ */
+function drawKeyboard(kx, ky, sc, rot){
+  ctx.save();
+  ctx.translate(kx, ky);
+  ctx.rotate(rot);
+  ctx.scale(sc, sc);
+  ctx.fillStyle = '#2E3338';
+  roundRect(-100, -42, 200, 84, 10); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.30)'; ctx.lineWidth = 2.5; ctx.stroke();
+  for(let r=0;r<4;r++){
+    for(let c=0;c<13;c++){
+      ctx.fillStyle = (r===0 && c===0) ? '#D9534F' : '#4A525A';
+      roundRect(-92 + c*14.3, -32 + r*15.6, 12, 13, 2.4); ctx.fill();
+    }
+  }
+  ctx.fillStyle = '#4A525A';
+  roundRect(-32, 29, 64, 13, 2.4); ctx.fill();
+  ctx.restore();
+}
+
+function drawStar(x, y, r, col){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const a = -Math.PI/2 + i*Math.PI/5;
+    const rr = i%2 ? r*0.44 : r;
+    ctx[i?'lineTo':'moveTo'](Math.cos(a)*rr, Math.sin(a)*rr);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawConfront(){
+  const n = confront.npc;
+  if(!n) return;
+  const isBoss = n.kind === 'boss';
+  const t = confront.hitT;
+  const hitting = confront.phase === 'hit';
+
+  // 压暗
+  ctx.fillStyle = 'rgba(20,18,16,.70)';
+  ctx.fillRect(0,0,W,H);
+
+  const midY = 470;
+  const npcX = W/2 - 110, meX = W/2 + 110;
+
+  // 对方的歪倒程度
+  const tilt = hitting && t > 0.42 ? Math.min(1, (t-0.42)/0.3) : 0;
+
+  // ---- 对方 ----
+  ctx.save();
+  ctx.translate(npcX, midY);
+  if(tilt > 0) ctx.rotate(-tilt*0.55);
+  ctx.scale(5.0, 5.0);
+  drawPerson(0, 0, 1, 0, isBoss ? ART.boss : ART.mate, { item: n.item });
+  ctx.restore();
+
+  // ---- 自己 ----
+  ctx.save();
+  ctx.translate(meX, midY);
+  ctx.scale(5.0, 5.0);
+  drawPerson(0, 0, -1, 0, ART.player, { item:'backpack', lean: hitting ? 3 : 0 });
+  ctx.restore();
+
+  // ---- 台词气泡（对方说的）----
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const bw = 560, bh = 108, bx = W/2 - bw/2, by = 150;
+  ctx.fillStyle = 'rgba(255,255,255,.96)';
+  roundRect(bx, by, bw, bh, 16); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(W/2-18, by+bh); ctx.lineTo(W/2+18, by+bh); ctx.lineTo(W/2, by+bh+24);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#501313';
+  ctx.font = '500 23px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillText(confront.line, W/2, by + bh/2);
+
+  // 对方名牌
+  ctx.font = '500 20px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = isBoss ? '#F7C1C1' : '#FAC775';
+  ctx.fillText(n.name, npcX, midY + 165);
+
+  // ---- 键盘与倒计时 ----
+  if(!hitting){
+    const p = Math.max(0, confront.t) / CONFRONT_WINDOW;
+    // 脉冲光圈
+    const pulse = 1 + Math.sin(performance.now()/180)*0.035;
+    ctx.strokeStyle = p > 0.35 ? 'rgba(59,109,17,.95)' : 'rgba(163,45,45,.95)';
+    ctx.lineWidth = 7; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(W/2, 950, 128*pulse, -Math.PI/2, -Math.PI/2 + Math.PI*2*p);
+    ctx.stroke();
+
+    drawKeyboard(W/2, 950, 1.0, 0);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '500 30px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('点屏幕 · 抄起键盘', W/2, 1130);
+    ctx.font = '400 19px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,.62)';
+    ctx.fillText('每局只此一次　·　动手扣 ' + CONFRONT_COST + ' 秒', W/2, 1168);
+  } else {
+    // 挥击轨迹
+    const ax = W/2, ay = 950, bxx = npcX + 40, byy = midY + 40;
+    let kx, ky, ka, sc;
+    if(t < 0.24){
+      const q = t/0.24, e = q*q;
+      kx = ax - e*60; ky = ay - e*90; ka = -e*0.8; sc = 1.0;
+    } else if(t < 0.44){
+      const q = (t-0.24)/0.20, e = q*q*(3-2*q);
+      kx = (ax-60) + e*(bxx-(ax-60));
+      ky = (ay-90) + e*(byy-(ay-90));
+      ka = -0.8 + e*(3.0+0.8);
+      sc = 1.0 - e*0.35;
+    } else {
+      kx = bxx; ky = byy; ka = 3.0; sc = 0.65;
+    }
+    // 残影
+    if(t > 0.24 && t < 0.52){
+      ctx.strokeStyle = 'rgba(255,255,255,.30)';
+      ctx.lineWidth = 10; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ax-60, ay-90);
+      ctx.quadraticCurveTo(W/2-60, 700, kx, ky);
+      ctx.stroke();
+    }
+    // 命中星星先画，键盘压在最上层 —— 不然键盘会被整个盖住
+    if(t > 0.42){
+      const q = Math.min(1, (t-0.42)/0.22);
+      const sp = 1 + q*0.5;
+      ctx.save();
+      ctx.globalAlpha = 1 - Math.max(0,(t-0.78)/0.37)*0.7;
+      drawStar(bxx-14, byy-6, 30*sp, '#FAC775');
+      drawStar(bxx-70, byy-40, 15*sp, '#FFF3D6');
+      drawStar(bxx+46, byy+34, 17*sp, '#FFF3D6');
+      drawStar(bxx+30, byy-62, 13*sp, '#FFF3D6');
+      ctx.restore();
+    }
+
+    drawKeyboard(kx, ky, sc, ka);
+
+      // 结果字幕
+      if(t > 0.60){
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#FAC775';
+        ctx.font = '500 34px -apple-system,"PingFang SC",sans-serif';
+        ctx.fillText('掀 桌 子', W/2, 1120);
+        ctx.fillStyle = 'rgba(255,255,255,.66)';
+        ctx.font = '400 20px -apple-system,"PingFang SC",sans-serif';
+        ctx.fillText('-' + CONFRONT_COST + ' 秒　·　他躺一会儿', W/2, 1162);
+      }
+  }
+}
+
 function draw(){
   ctx.save();
   ctx.clearRect(0,0,W,H);
@@ -898,6 +1139,7 @@ function draw(){
 
   /* 视野锥（按房间裁剪，墙外不显示） */
   for(const n of npcs){
+    if(n.down > 0) continue;                 // 躺着的人没有视野锥
     const room = ROOMS.find(r=> r.id === n.room);
     if(!room) continue;
     ctx.save();
@@ -994,12 +1236,22 @@ function draw(){
     ctx.beginPath(); ctx.arc(n.x, n.y, 19, 0, Math.PI*2); ctx.fill();
 
     // 小人：同事夹着文件 / 抱着电脑，领导端着咖啡
+    const down = n.down > 0;
     drawPerson(n.x, n.y, n.dir.x, n.dir.y, isBoss ? ART.boss : ART.mate, {
       item: n.item,
       scale: 1.18,
-      bob:  Math.sin(n.phase || 0) * 1.6,
-      sway: Math.cos((n.phase || 0) * 0.5) * 0.045
+      tilt: down ? Math.PI/2 : 0,            // 被打倒就歪着躺下
+      bob:  down ? 0 : Math.sin(n.phase || 0) * 1.6,
+      sway: down ? 0 : Math.cos((n.phase || 0) * 0.5) * 0.045
     });
+    if(down){
+      // 头顶转圈的星星
+      const st = performance.now()/380;
+      for(let i=0;i<3;i++){
+        const a = st + i*Math.PI*2/3;
+        drawStar(n.x + Math.cos(a)*18, n.y - 24 + Math.sin(a)*7, 6, '#FAC775');
+      }
+    }
 
     // 名字
     ctx.font = '400 12.5px -apple-system,"PingFang SC",sans-serif';
@@ -1030,6 +1282,9 @@ function draw(){
 
   ctx.restore();
 
+  /* 「掀桌子」场景：盖在整个楼层之上 */
+  if(state === 'confront') drawConfront();
+
   /* 屏幕边缘警示 */
   if(flashVignette > 0.01){
     const g2 = ctx.createRadialGradient(W/2,H/2, H*0.32, W/2,H/2, H*0.66);
@@ -1052,6 +1307,14 @@ function draw(){
   ctx.fillStyle = C.muted;
   ctx.fillText('距下班还有（秒）', W-91, 58);
 
+  // 掀桌子剩余次数
+  const hasCounter = counter > 0;
+  ctx.fillStyle = hasCounter ? 'rgba(24,95,165,.92)' : 'rgba(255,255,255,.85)';
+  roundRect(W-162, 74, 142, 30, 10); ctx.fill();
+  ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = hasCounter ? '#FFFFFF' : C.muted;
+  ctx.fillText(hasCounter ? '掀桌子 ×' + counter : '掀桌子 已用', W-91, 89);
+
   // 局数
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,.90)';
@@ -1069,8 +1332,8 @@ function draw(){
   ctx.fillStyle = C.muted;
   ctx.fillText('位置：' + curName, 30, 60);
 
-  // 摇杆
-  if(joy.active){
+  // 摇杆（只有真正在走位时才画）
+  if(state === 'playing' && joy.active){
     ctx.strokeStyle = 'rgba(44,44,42,.20)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 62, 0, Math.PI*2); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.42)';
@@ -1079,7 +1342,7 @@ function draw(){
     ctx.beginPath();
     ctx.arc(joy.ox + joy.dx*joy.mag*62, joy.oy + joy.dy*joy.mag*62, 27, 0, Math.PI*2);
     ctx.fill();
-  } else {
+  } else if(state === 'playing') {
     ctx.strokeStyle = 'rgba(44,44,42,.16)'; ctx.lineWidth = 1.5; ctx.setLineDash([4,6]);
     ctx.beginPath(); ctx.arc(150, 1130, 62, 0, Math.PI*2); ctx.stroke();
     ctx.setLineDash([]);
@@ -1089,6 +1352,7 @@ function draw(){
   }
 
   // 跑按钮
+  if(state === 'playing'){
   ctx.beginPath(); ctx.arc(628, 1150, 62, 0, Math.PI*2);
   ctx.fillStyle = runBtn.active ? 'rgba(24,95,165,.90)' : 'rgba(255,255,255,.42)';
   ctx.fill();
@@ -1098,6 +1362,7 @@ function draw(){
   ctx.fillStyle = runBtn.active ? '#FFFFFF' : 'rgba(44,44,42,.62)';
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText('跑', 628, 1150);
+  }
 }
 
 /* ============================================================
@@ -1117,6 +1382,8 @@ function toLogical(clientX, clientY){
 function inRunBtn(p){ return Math.hypot(p.x-628, p.y-1150) < 74; }
 
 cv.addEventListener('pointerdown', e=>{
+  // 「掀桌子」场景：点屏幕任何地方都算动手（手机上不用瞄准）
+  if(state === 'confront'){ swingTool(); return; }
   if(state !== 'playing') return;
   cv.setPointerCapture(e.pointerId);
   const p = toLogical(e.clientX, e.clientY);
@@ -1154,6 +1421,8 @@ cv.addEventListener('pointerleave', endPointer);
 
 window.addEventListener('keydown', e=>{
   const k = e.key.toLowerCase();
+  if(state === 'confront' && (k === ' ' || k === 'enter')){ e.preventDefault(); swingTool(); return; }
+  if(state !== 'playing') return;
   keysDown.add(k);
   if(k === 'r' && state !== 'menu'){ startRun(); }
   if(k === ' ' && state === 'menu'){ startRun(); }
