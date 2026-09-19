@@ -189,68 +189,131 @@ const C = {
 };
 
 /* ---------- 关卡几何 ---------- */
-// 可通行房间（矩形并集 = 可行走区域；房间之间在渲染时描墙线，靠 DOORS 开口连通）
+// 房间用矩形，走廊用【曲线管】（折线 + 宽度）。
 //
-// 平面结构：左右两条竖直走廊夹着中间的三个房间。
-// 关键设计 —— 中间三个房间【互不相通】，只能从左右走廊进：
-//   所以纵向移动必须选一条走廊，这就是玩家的第一次取舍；
-//   往上最后只能穿过「开放办公区」进电梯厅，这是唯一的漏斗口。
+// 为什么走廊必须弯：视野改成「正前方一条直线、能一眼看到底」之后，
+// 一条笔直的走廊 = 死亡走廊（领导站一头就能看到另一头）。
+// 走廊每弯一次，直线视线就被墙切断一次，玩家才有一段一段的安全区。
 //
-//   ┌──────────────── 电梯厅（打卡机）────────────────┐   y  30..200
-//   ├──┬──────────────┬───────────────┬──────────────┤
-//   │  │  开放办公区   │               │              │   y 200..490
-//   │西│              │               │      东      │
-//   │走├──────────────┴───────────────┤      走      │   y 490..760
-//   │廊│         茶水间                │      廊      │
-//   │  ├──────────────────────────────┤              │   y 760..1030
-//   │  │         档案室                │              │
-//   ├──┴──────────────┴───────────────┴──────────────┤
-//   │                  工位区                        │   y 1030..1250
+// 每条走廊三个弯，每个弯都朝房间里拐进去 —— 那个拐进去的部分同时就是「开口」，
+// 所以走廊和房间不需要额外的门。
+//
+//   ┌──────────────── 电梯厅（打卡机）────────────────┐
+//   ├╮──────────────┬───────────────┬──────────────╭┤
+//   │╰╮ 开放办公区   │               │             ╭╯│
+//   │ ╰────────────╮│               │╭────────────╯ │
+//   │  茶水间       ╰┤               ├╯              │
+//   │ ╭────────────╯│               │╰────────────╮ │
+//   │╭╯ 档案室      │               │             ╰╮│
+//   ├╯──────────────┴───────────────┴──────────────╰┤
+//   │                  工位区                        │
 //   └────────────────────────────────────────────────┘
 const ROOMS = [
   { id:'lobby',  x: 30, y:  30, w:660, h:170, name:'电梯厅'     },
-  { id:'west',   x: 30, y: 200, w:120, h:800, name:'西走廊'     },
   { id:'open',   x:150, y: 200, w:420, h:280, name:'开放办公区'  },
-  { id:'east',   x:570, y: 200, w:120, h:800, name:'东走廊'     },
   { id:'pantry', x:150, y: 480, w:420, h:260, name:'茶水间'     },
   { id:'arch',   x:150, y: 740, w:420, h:260, name:'档案室'     },
   { id:'desk',   x: 30, y:1000, w:660, h:250, name:'工位区'     }
 ];
 
-// 门：墙上缺口。注意中间三间彼此【没有】门 —— 这是刻意的，逼玩家选边
-const DOORS = [
-  { x: 45, y: 150, w: 90, h:100, a:'lobby',  b:'west'   },   // 跨 y=200
-  { x:585, y: 150, w: 90, h:100, a:'lobby',  b:'east'   },
-  { x:300, y: 150, w:120, h:100, a:'lobby',  b:'open'   },   // 顶部唯一漏斗
-  { x:100, y: 270, w:100, h:140, a:'west',   b:'open'   },   // 跨 x=150
-  { x:520, y: 270, w:100, h:140, a:'east',   b:'open'   },
-  { x:100, y: 550, w:100, h:140, a:'west',   b:'pantry' },
-  { x:520, y: 550, w:100, h:140, a:'east',   b:'pantry' },
-  { x:100, y: 800, w:100, h:140, a:'west',   b:'arch'   },
-  { x:520, y: 800, w:100, h:140, a:'east',   b:'arch'   },
-  { x: 45, y: 950, w: 90, h:110, a:'desk',   b:'west'   },   // 跨 y=1000，底部三个出口
-  { x:300, y: 950, w:120, h:110, a:'desk',   b:'arch'   },
-  { x:585, y: 950, w: 90, h:110, a:'desk',   b:'east'   }
+// 曲线走廊：pts 是中心线折线，w 是宽度。
+// 三个「拐进房间」的弯分别在 y≈860 / y≈610 / y≈360，也就是三个房间的中段。
+const CORRIDORS = [
+  { id:'west', name:'西走廊', w:120,
+    pts:[[ 96,1015],[ 96, 940],[235, 900],[235, 820],[ 96, 780],
+         [ 96, 690],[235, 650],[235, 570],[ 96, 530],[ 96, 440],
+         [235, 400],[235, 320],[ 96, 280],[ 96, 210],[140, 195]] },
+  { id:'east', name:'东走廊', w:120,
+    pts:[[624,1015],[624, 940],[485, 900],[485, 820],[624, 780],
+         [624, 690],[485, 650],[485, 570],[624, 530],[624, 440],
+         [485, 400],[485, 320],[624, 280],[624, 210],[580, 195]] }
 ];
+
+// 门：只剩「墙上缺口」这一个作用（渲染用）。走廊和房间本来就靠拐弯处连通了。
+const DOORS = [
+  { x: 96, y: 165, w:100, h: 60, a:'lobby', b:'west'   },
+  { x:524, y: 165, w:100, h: 60, a:'lobby', b:'east'   },
+  { x:150, y: 320, w: 50, h: 80, a:'west',  b:'open'   },
+  { x:150, y: 570, w: 50, h: 80, a:'west',  b:'pantry' },
+  { x:150, y: 820, w: 50, h: 80, a:'west',  b:'arch'   },
+  { x:520, y: 320, w: 50, h: 80, a:'east',  b:'open'   },
+  { x:520, y: 570, w: 50, h: 80, a:'east',  b:'pantry' },
+  { x:520, y: 820, w: 50, h: 80, a:'east',  b:'arch'   },
+  { x: 45, y: 970, w:110, h: 70, a:'desk',  b:'west'   },
+  { x:565, y: 970, w:110, h: 70, a:'desk',  b:'east'   }
+];
+
+// 点到线段的距离
+function distSeg(px,py, x1,y1, x2,y2){
+  const dx=x2-x1, dy=y2-y1;
+  const L2=dx*dx+dy*dy;
+  let t = L2 ? ((px-x1)*dx + (py-y1)*dy)/L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px-(x1+dx*t), py-(y1+dy*t));
+}
+// 点到折线（走廊中心线）的距离
+function distPoly(px,py, pts){
+  let m = 1e9;
+  for(let i=0;i<pts.length-1;i++){
+    const d = distSeg(px,py, pts[i][0],pts[i][1], pts[i+1][0],pts[i+1][1]);
+    if(d < m) m = d;
+  }
+  return m;
+}
+// 走廊的包围盒（加速：不在盒子里就直接跳过）
+function polyBBox(pts){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const p of pts){ if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0]; if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1]; }
+  return {x0:x0-80, y0:y0-80, x1:x1+80, y1:y1+80};
+}
+for(const c of CORRIDORS){ c.bb = polyBBox(c.pts); }
+
+// 地板（不含家具）：房间 ∪ 走廊 ∪ 门口的墙洞
+function inFloor(x,y){
+  for(const r of ROOMS){
+    if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h) return true;
+  }
+  for(const c of CORRIDORS){
+    const bb = c.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
+    if(distPoly(x,y,c.pts) <= c.w/2) return true;
+  }
+  for(const d of DOORS){
+    if(x>=d.x && x<=d.x+d.w && y>=d.y && y<=d.y+d.h) return true;
+  }
+  return false;
+}
+
+// 墙的位图（8px 一格）。视线的射线步进用它查，比每次都算折线距离快很多
+const MASK_S = 8;
+const MASK_W = Math.ceil(W/MASK_S), MASK_H = Math.ceil(H/MASK_S);
+const FLOOR_MASK = new Uint8Array(MASK_W*MASK_H);
+function buildFloorMask(){
+  for(let gy=0;gy<MASK_H;gy++) for(let gx=0;gx<MASK_W;gx++){
+    FLOOR_MASK[gy*MASK_W+gx] = inFloor(gx*MASK_S+MASK_S/2, gy*MASK_S+MASK_S/2) ? 1 : 0;
+  }
+}
+function isWall(x,y){
+  const gx = (x/MASK_S)|0, gy = (y/MASK_S)|0;
+  if(gx<0||gy<0||gx>=MASK_W||gy>=MASK_H) return true;
+  return FLOOR_MASK[gy*MASK_W+gx] === 0;
+}
+
 
 // 家具（同时挡视线、挡走位）。位置都躲开了门口，避免一进房间就被卡住
 const COVERS = [
-  // 工位区：两排隔板，中间留一条正面通道
+  // 工位区：两排隔板，中间留一条正面通道（走廊够不到这里，位置不用动）
   { x: 60, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板', chair:{side:'s', n:3} },
   { x:440, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板', chair:{side:'s', n:3} },
-  // 开放办公区 / 茶水间 / 档案室：两件错开摆，逼出 Z 字走位
-  { x:180, y: 250, w:170, h: 60, t:'desk',    label:'工位',     chair:{side:'s', n:2} },
-  { x:370, y: 370, w:170, h: 60, t:'desk',    label:'工位',     chair:{side:'n', n:2} },
-  { x:180, y: 530, w:170, h: 60, t:'counter', label:'咖啡机'   },
-  { x:370, y: 640, w:170, h: 60, t:'sofa',    label:'沙发'     },
-  { x:180, y: 790, w:170, h: 60, t:'desk',    label:'文件柜'   },
-  { x:370, y: 900, w:170, h: 60, t:'desk',    label:'文件柜'   },
-  // 走廊：各放一件，逼你贴着另一侧走
-  { x: 32, y: 500, w: 50, h: 36, t:'rack',    label:'快递架'   },
-  { x:634, y: 650, w: 50, h: 36, t:'rack',    label:'快递架'   },
-  // 电梯厅：把两侧门口让出来
-  { x: 60, y:  80, w:130, h: 56, t:'counter', label:'前台'     },
-  { x:530, y:  80, w:130, h: 56, t:'sofa',    label:'休息区'   }
+  // 中间三个房间：家具只放在走廊【两个弯之间】的那几段（y 235-295 / 405-465 / 495-555 / 660-720 / 755-815 / 915-975）
+  { x:250, y: 235, w:180, h: 60, t:'desk',    label:'工位',   chair:{side:'s', n:2} },
+  { x:250, y: 405, w:155, h: 60, t:'desk',    label:'工位',   chair:{side:'n', n:2} },
+  { x:265, y: 495, w:175, h: 60, t:'counter', label:'咖啡机' },
+  { x:265, y: 660, w:175, h: 60, t:'sofa',    label:'沙发'   },
+  { x:265, y: 755, w:175, h: 60, t:'desk',    label:'文件柜' },
+  { x:265, y: 915, w:175, h: 60, t:'desk',    label:'文件柜' },
+  // 电梯厅
+  { x: 60, y:  80, w:130, h: 56, t:'counter', label:'前台'   },
+  { x:530, y:  80, w:130, h: 56, t:'sofa',    label:'休息区' }
 ];
 
 /* ---------- 圆形承重柱 ----------
@@ -259,10 +322,9 @@ const COVERS = [
    另外真实办公楼本来就有承重柱，摆在这儿也不违和。
    柱子同时挡走位、挡视线。 */
 const PILLARS = [
-  { x:225, y:165, r:22 }, { x:495, y:165, r:22 },   // 电梯厅：打卡机两侧
-  { x:200, y:400, r:24 }, { x:495, y:258, r:24 },   // 开放办公区
-  { x:230, y:680, r:24 }, { x:490, y:570, r:24 },   // 茶水间
-  { x:230, y:940, r:24 }, { x:490, y:800, r:24 }    // 档案室
+  { x:225, y:115, r:22 }, { x:495, y:115, r:22 },                       // 电梯厅（往上挪，别和南墙夹成漏斗）
+  { x:360, y:335, r:24 }, { x:360, y:618, r:24 }, { x:360, y:868, r:24 }, // 三个房间的中缝上
+  { x:480, y:250, r:20 }, { x:250, y:480, r:20 }, { x:480, y:745, r:20 }
 ];
 
 // 注意：走廊（98px 宽）里【不能】放柱子 —— 柱子吃掉约 60px，同事的光束又占 50px，
@@ -324,7 +386,7 @@ const rndRange = a => a[0] + Math.random()*(a[1]-a[0]);
 const NPC_DEFS = {
   // 工位区：在两排隔板之间来回，时不时坐下敲两下
   A: { key:'A', kind:'mate', name:'同事 · 老王', room:'desk', item:'paper',
-       speed:72, vision:190, fov:70, alertTime:1.5,
+       speed:72, vision:250, fov:70, alertTime:1.5,
        stations:[
          { x:170, y:1192, act:'sit',  face:[0,-1], noChair:true },   // 坐在左排中间的椅子上
          { x:550, y:1192, act:'sit',  face:[0,-1], noChair:true },   // 坐在右排中间的椅子上
@@ -334,35 +396,38 @@ const NPC_DEFS = {
        ] },
   // 西走廊：走廊里没桌子，坐下就变成「蹲在快递架边整理」
   B: { key:'B', kind:'mate', name:'同事 · 小李', room:'west', item:'laptop',
-       speed:70, vision:175, fov:70, alertTime:1.5,
+       speed:70, vision:330, fov:70, alertTime:1.5,
        stations:[
-         { x:112, y:330, act:'chat', face:[0,1] },
-         { x:118, y:520, act:'sit',  face:[-1,0] },
-         { x:112, y:700, act:'chat', face:[0,-1] },
-         { x:112, y:900, act:'sit',  face:[-1,0] }
+         { x: 96, y:440, act:'chat', face:[0,-1] },   // 站点直接落在走廊中心线上
+         { x:235, y:570, act:'sit',  face:[1,0] },    // 弯道里，蹲下来整理快递
+         { x: 96, y:690, act:'chat', face:[0,1] },
+         { x:235, y:820, act:'sit',  face:[1,0] },
+         { x: 96, y:940, act:'chat', face:[0,1] }
        ] },
   // 东走廊
   C: { key:'C', kind:'boss', name:'领导 · 张总', room:'east', item:'coffee',
-       speed:62, vision:190, fov:80, alertTime:0.9,
+       speed:62, vision:520, fov:80, alertTime:0.9,
        stations:[
-         { x:612, y:340, act:'chat', face:[0,1] },
-         { x:608, y:668, act:'sit',  face:[1,0] },
-         { x:612, y:880, act:'chat', face:[0,-1] }
+         { x:624, y:440, act:'chat', face:[0,-1] },
+         { x:485, y:570, act:'sit',  face:[-1,0] },
+         { x:624, y:690, act:'chat', face:[0,1] },
+         { x:485, y:820, act:'sit',  face:[-1,0] },
+         { x:624, y:940, act:'chat', face:[0,1] }
        ] },
   // 开放办公区：堵在进电梯厅的漏斗口前面
   D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'open', item:'coffee',
-       speed:68, vision:200, fov:80, alertTime:0.9,
+       speed:68, vision:360, fov:80, alertTime:0.9,
        stations:[
-         { x:222, y:330, act:'sit',  face:[0,-1], noChair:true },   // 上排工位
-         { x:497, y:350, act:'sit',  face:[0,1],  noChair:true },   // 下排工位
+         { x:295, y:315, act:'sit',  face:[0,-1], noChair:true },   // 上排工位的椅子
+         { x:366, y:385, act:'sit',  face:[0,1],  noChair:true },   // 下排工位的椅子
          { x:265, y:225, act:'chat', face:[1,0] },
          { x:455, y:228, act:'chat', face:[-1,0] }
        ] },
   // 档案室：想抄后门绕远路，就得先过他
   E: { key:'E', kind:'mate', name:'同事 · 老周', room:'arch', item:'paper',
-       speed:68, vision:180, fov:70, alertTime:1.5,
+       speed:68, vision:250, fov:70, alertTime:1.5,
        stations:[
-         { x:360, y:772, act:'chat', face:[0,1] },
+         { x:320, y:880, act:'chat', face:[0,1] },
          { x:265, y:875, act:'sit',  face:[0,1] },
          { x:455, y:875, act:'chat', face:[0,-1] }
        ] }
@@ -443,7 +508,11 @@ function segRect(x1,y1,x2,y2,r){
 function walkable(x,y){
   let ok=false;
   for(const r of ROOMS) if(x>=r.x+INSET && x<=r.x+r.w-INSET && y>=r.y+INSET && y<=r.y+r.h-INSET){ ok=true; break; }
-  if(!ok) for(const d of DOORS) if(x>=d.x+INSET && x<=d.x+d.w-INSET && y>=d.y+INSET && y<=d.y+d.h-INSET){ ok=true; break; }
+  if(!ok) for(const c of CORRIDORS){
+    const bb=c.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
+    if(distPoly(x,y,c.pts) <= c.w/2 - INSET){ ok=true; break; }   // 曲线走廊：贴中心线走
+  }
+  if(!ok) for(const d of DOORS) if(x>=d.x+6 && x<=d.x+d.w-6 && y>=d.y+6 && y<=d.y+d.h-6){ ok=true; break; }
   if(!ok) return false;
   for(const c of COVERS) if(x>c.x-9 && x<c.x+c.w+9 && y>c.y-9 && y<c.y+c.h+9) return false;
   for(const p of PILLARS) if(Math.hypot(x-p.x, y-p.y) < p.r + 10) return false;   // 承重柱
@@ -452,6 +521,11 @@ function walkable(x,y){
 
 // 点属于哪个房间（用于视线遮挡：不在同一房间 = 被墙挡住）
 function roomOf(x,y){
+  // 走廊优先：弯道拐进房间的那一段两个都算，报「走廊」更符合玩家直觉
+  for(const c of CORRIDORS){
+    const bb=c.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
+    if(distPoly(x,y,c.pts) <= c.w/2) return c.id;
+  }
   for(const r of ROOMS) if(inRect(x,y,r)) return r.id;
   for(const d of DOORS) if(inRect(x,y,d)) return d.a;
   return null;
@@ -583,10 +657,24 @@ function updateNpc(n, dt){
   n.phase += dt * n.speed * 0.16;
 }
 
+// 两点之间有没有被墙 / 家具 / 柱子挡住。墙用 8px 位图查，够快
+function blockedLine(x1,y1,x2,y2){
+  const d = Math.hypot(x2-x1, y2-y1);
+  const steps = Math.max(2, Math.ceil(d/9));
+  for(let i=1;i<steps;i++){
+    const t = i/steps;
+    const x = x1+(x2-x1)*t, y = y1+(y2-y1)*t;
+    if(isWall(x,y)) return true;
+    for(const c of COVERS) if(inRect(x,y,c)) return true;
+    for(const p of PILLARS) if(Math.hypot(x-p.x,y-p.y) < p.r) return true;
+  }
+  return false;
+}
+
 // 该 NPC 此刻能否看见玩家
 function canSee(n){
   if(n.down > 0) return false;                                          // 躺平中，看不见任何东西
-  if(roomOf(n.x,n.y) !== roomOf(player.x,player.y)) return false;      // 墙挡视线
+  // 不再限制「必须在同一个房间」—— 改成真实遮挡：墙、家具、柱子都会切断这条线
   // 「正前方一条直线」：把玩家位置投影到朝向上，判断是否落在光束范围内
   //   along = 沿朝向的距离（必须在 0 ~ 视野长度 之间）
   //   side  = 垂直偏移（必须小于光束半宽）—— 这就是直角墙切不出来的那块
@@ -597,8 +685,7 @@ function canSee(n){
   const hw    = beamHalf(n);
   if(along <= 0 || along > range) return false;
   if(side > hw) return false;
-  for(const c of COVERS)  if(segRect(n.x,n.y,player.x,player.y,c)) return false;   // 家具挡
-  for(const p of PILLARS) if(segCircle(n.x,n.y,player.x,player.y,p)) return false; // 柱子挡
+  if(blockedLine(n.x,n.y, player.x,player.y)) return false;   // 墙 / 家具 / 柱子挡
   return true;
 }
 
@@ -1327,17 +1414,23 @@ function draw(){
   ctx.fillStyle = C.wall;
   ctx.fillRect(0,0,W,H);
 
-  const isHall = id => (id === 'west' || id === 'east');
+  // 房间地板
   for(const r of ROOMS){
-    ctx.fillStyle = isHall(r.id) ? C.floorAlt : C.floor;
+    ctx.fillStyle = C.floor;
     roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
   }
-  for(const d of DOORS){
-    ctx.fillStyle = C.floorAlt;
-    ctx.fillRect(d.x, d.y, d.w, d.h);
+
+  // 曲线走廊：先描一圈墙边，再描一遍地板 —— 出来就是一条带墙的弯管子
+  for(const c of CORRIDORS){
+    const path = new Path2D();
+    path.moveTo(c.pts[0][0], c.pts[0][1]);
+    for(let i=1;i<c.pts.length;i++) path.lineTo(c.pts[i][0], c.pts[i][1]);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = '#8F8B7C'; ctx.lineWidth = c.w + 5; ctx.stroke(path);
+    ctx.strokeStyle = C.floorAlt; ctx.lineWidth = c.w; ctx.stroke(path);
   }
 
-  // 墙线：先描出每个房间的内轮廓，再用门口色把门洞刷掉 —— 门才看得出来是"开口"
+  // 房间墙线；再把门口的墙洞刷掉
   ctx.strokeStyle = '#8F8B7C';
   ctx.lineWidth = 4;
   for(const r of ROOMS){
@@ -1365,41 +1458,50 @@ function draw(){
     }
   }
 
-  /* 视野：正前方一条直线光束（按房间裁剪，墙外不显示）。
-   家具和承重柱在这一层之后绘制，所以它们会自然地把光束遮掉。 */
+  /* 视野：正前方一条直线光束。用射线步进逐条算出被墙截断的位置，
+   拼成一个多边形 —— 走廊一弯，光束就在弯的地方断掉。 */
   for(const n of npcs){
-    if(n.down > 0) continue;                 // 躺着的人没有视野
-    const room = ROOMS.find(r=> r.id === n.room);
-    if(!room) continue;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
-
+    if(n.down > 0) continue;
     const a = Math.atan2(n.dir.y, n.dir.x);
     const danger = n.alert > 0.02;
-    const vis = npcVision(n);                // 坐下办公时这条线明显变短
+    const vis = npcVision(n);
     const hw  = beamHalf(n);
     const base = (n.kind==='boss') ? '226,75,74' : '239,159,39';
     const alpha = 0.30 + n.alert*0.34;
+    const cosA = Math.cos(a), sinA = Math.sin(a);
+    const pX = -sinA, pY = cosA;
 
-    ctx.save();
-    ctx.translate(n.x, n.y);
-    ctx.rotate(a);
-    // 沿光束方向做渐变：近端实、远端虚
-    const g = ctx.createLinearGradient(0, 0, vis, 0);
+    const N = 10;
+    const far = [];
+    for(let i=0;i<=N;i++){
+      const off = -hw + (2*hw)*(i/N);
+      const ox = n.x + pX*off, oy = n.y + pY*off;
+      let hit = vis;
+      for(let d=10; d<=vis; d+=10){
+        if(isWall(ox+cosA*d, oy+sinA*d)){ hit = d; break; }
+      }
+      far.push([ox + cosA*hit, oy + sinA*hit]);
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(n.x + pX*(-hw), n.y + pY*(-hw));
+    for(const p of far) ctx.lineTo(p[0], p[1]);
+    ctx.lineTo(n.x + pX*hw, n.y + pY*hw);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(n.x, n.y, n.x+cosA*vis, n.y+sinA*vis);
     g.addColorStop(0,    'rgba('+base+','+(alpha*0.95).toFixed(3)+')');
-    g.addColorStop(0.62, 'rgba('+base+','+(alpha*0.52).toFixed(3)+')');
+    g.addColorStop(0.62, 'rgba('+base+','+(alpha*0.50).toFixed(3)+')');
     g.addColorStop(1,    'rgba('+base+',0)');
     ctx.fillStyle = g;
-    ctx.fillRect(0, -hw, vis, hw*2);
-    // 两条边线：把判定边界画出来，玩家才不会觉得「莫名其妙被看见」
-    ctx.strokeStyle = danger ? 'rgba('+base+',0.80)' : 'rgba('+base+',0.36)';
-    ctx.lineWidth = danger ? 2 : 1.2;
+    ctx.fill();
+
+    // 两条侧边线：把判定边界画出来
+    ctx.strokeStyle = danger ? 'rgba('+base+',0.72)' : 'rgba('+base+',0.30)';
+    ctx.lineWidth = danger ? 1.8 : 1.2;
     ctx.beginPath();
-    ctx.moveTo(0, -hw); ctx.lineTo(vis, -hw);
-    ctx.moveTo(0,  hw); ctx.lineTo(vis,  hw);
+    ctx.moveTo(n.x + pX*(-hw), n.y + pY*(-hw)); ctx.lineTo(far[0][0], far[0][1]);
+    ctx.moveTo(n.x + pX*(hw),  n.y + pY*(hw));  ctx.lineTo(far[N][0], far[N][1]);
     ctx.stroke();
-    ctx.restore();
-    ctx.restore();
   }
 
   /* 家具 */
@@ -1817,6 +1919,7 @@ function loop(t){
 }
 
 resize();
+buildFloorMask();
 buildRound();
 show('ovStart');
 requestAnimationFrame(t=>{ last = t; loop(t); });
