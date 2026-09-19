@@ -254,7 +254,7 @@ const COVERS = [
 ];
 
 // 打卡机
-const MACHINE = { x:330, y:44, w:60, h:44 };
+const MACHINE = { x:300, y:40, w:120, h:58 };   // 放大，好把「下班打卡」四个字写上去
 const WIN_ZONE = { x:360, y: 96, rx:64, ry:52 };
 
 // 出生点：工位区最里面
@@ -300,11 +300,9 @@ const NPC_DEFS = {
 
 // 难度阶梯：第 1 局保送，逐局加码（对应设计稿里的"首局保送"）
 const ROUND_NPCS = [
-  ['A'],                     // 第 1 局 · 只有工位区一个人
-  ['A','D'],                 // 第 2 局 · 加漏斗口的领导
-  ['A','B','D'],             // 第 3 局 · 加西走廊
-  ['A','B','C','D'],         // 第 4 局 · 加东走廊
-  ['A','B','C','D','E']      // 第 5 局起 · 全员到齐
+  ['A','B','D'],             // 第 1 局 · 工位区 + 西走廊 + 漏斗口
+  ['A','B','C','D'],         // 第 2 局 · 加东走廊
+  ['A','B','C','D','E']      // 第 3 局起 · 全员到齐
 ];
 
 // 按局数缩放 NPC 感知能力。
@@ -312,11 +310,9 @@ const ROUND_NPCS = [
 // 第 1 局把视野压到 72% —— 同事·老王视野 190→137，玩家站在工位区中间就不会被看见了。
 // rationale：首局的目的是「教会玩家看视野锥」，不是「考住他」。
 const ROUND_TUNING = [
-  { vision:0.60, speed:0.72, alert:2.2 },   // 第 1 局 · 保送
-  { vision:0.85, speed:0.90, alert:1.6 },   // 第 2 局 · 加入领导
-  { vision:0.94, speed:0.96, alert:1.2 },   // 第 3 局 · 加入西走廊
-  { vision:0.90, speed:0.94, alert:1.1 },   // 第 4 局 · 两条走廊同时有人，软一档
-  { vision:0.96, speed:0.98, alert:1.0 }    // 第 5 局起 · 全员
+  { vision:0.94, speed:0.96, alert:1.2 },   // 第 1 局 · 西走廊 + 漏斗口
+  { vision:0.90, speed:0.94, alert:1.1 },   // 第 2 局 · 两条走廊同时有人，软一档
+  { vision:0.96, speed:0.98, alert:1.0 }    // 第 3 局起 · 全员
 ];
 
 /* ---------- 台词（被打断时的话） ---------- */
@@ -1125,8 +1121,8 @@ function draw(){
   ctx.fillStyle = '#BDB9AA';
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   for(const r of ROOMS){
-    if(r.id === 'lobby'){
-      // 电梯厅顶部被 HUD 盖住，标签改画到右下角，避开西走廊的标签
+    // lobby 顶部被计时器盖住、desk 左上角被掀桌子计数条盖住，这两个挪到右下角
+    if(r.id === 'lobby' || r.id === 'desk'){
       const prevAlign = ctx.textAlign;
       ctx.textAlign = 'right';
       ctx.fillText(r.name, r.x + r.w - 14, r.y + r.h - 20);
@@ -1194,20 +1190,35 @@ function draw(){
     }
   }
 
-  /* 打卡机 */
+  /* 打卡机（终点）：屏幕上直接写「下班打卡」，玩家一眼就知道往哪走 */
+  const mgx = MACHINE.x + MACHINE.w/2, mgy = MACHINE.y + MACHINE.h/2;
+  const glow = 0.5 + Math.sin(performance.now()/560)*0.5;
+  // 呼吸光晕
+  ctx.fillStyle = 'rgba(59,109,17,' + (0.10 + 0.14*glow).toFixed(3) + ')';
+  ctx.beginPath();
+  ctx.ellipse(mgx, mgy + 10, MACHINE.w*0.95, MACHINE.h*0.9, 0, 0, Math.PI*2);
+  ctx.fill();
+  // 机身
   ctx.fillStyle = C.machine;
-  roundRect(MACHINE.x, MACHINE.y, MACHINE.w, MACHINE.h, 7); ctx.fill();
-  ctx.fillStyle = '#8FE3B8';
-  ctx.fillRect(MACHINE.x+43, MACHINE.y+11, 8, 6);
-  ctx.font = '500 13px -apple-system,"PingFang SC",sans-serif';
-  ctx.fillStyle = C.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('打卡机', MACHINE.x + MACHINE.w/2, MACHINE.y + MACHINE.h + 8);
+  roundRect(MACHINE.x, MACHINE.y, MACHINE.w, MACHINE.h, 11); ctx.fill();
+  // 屏幕
+  ctx.fillStyle = '#0D2A1B';
+  roundRect(MACHINE.x+10, MACHINE.y+9, MACHINE.w-20, MACHINE.h-27, 5); ctx.fill();
+  // 屏幕上的字
+  ctx.fillStyle = '#6FE39C';
+  ctx.font = '500 20px -apple-system,"PingFang SC",sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('下班打卡', mgx, MACHINE.y + 27);
+  // 指示灯
+  ctx.fillStyle = 'rgba(111,227,156,' + (0.45 + 0.55*glow).toFixed(2) + ')';
+  ctx.beginPath(); ctx.arc(mgx, MACHINE.y + MACHINE.h - 11, 3.4, 0, Math.PI*2); ctx.fill();
 
-  // 到达提示环
-  ctx.strokeStyle = 'rgba(59,109,17,.28)';
-  ctx.lineWidth = 1.2; ctx.setLineDash([5,5]);
+  // 到达范围提示环（虚线呼吸）
+  ctx.strokeStyle = 'rgba(59,109,17,' + (0.20 + 0.22*glow).toFixed(2) + ')';
+  ctx.lineWidth = 2; ctx.setLineDash([7,7]);
+  ctx.lineDashOffset = -performance.now()/60;
   ctx.beginPath(); ctx.ellipse(WIN_ZONE.x, WIN_ZONE.y, WIN_ZONE.rx, WIN_ZONE.ry, 0, 0, Math.PI*2); ctx.stroke();
-  ctx.setLineDash([]);
+  ctx.setLineDash([]); ctx.lineDashOffset = 0;
 
   /* NPC */
   for(const n of npcs){
@@ -1306,13 +1317,24 @@ function draw(){
   ctx.fillStyle = C.muted;
   ctx.fillText('距下班还有（秒）', W-91, 58);
 
-  // 掀桌子剩余次数
+  // 掀桌子剩余次数：本来在右上角太小看不见，挪到左下角、放大、加呼吸边框
   const hasCounter = counter > 0;
-  ctx.fillStyle = hasCounter ? 'rgba(24,95,165,.92)' : 'rgba(255,255,255,.85)';
-  roundRect(W-162, 74, 142, 30, 10); ctx.fill();
-  ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
+  const cw = 232, chh = 54, cx0 = 20, cy0 = 962;
+  if(hasCounter){
+    const cp = 0.5 + Math.sin(performance.now()/430)*0.5;
+    ctx.fillStyle = 'rgba(24,95,165,' + (0.18 + 0.18*cp).toFixed(2) + ')';
+    roundRect(cx0-6, cy0-6, cw+12, chh+12, 16); ctx.fill();
+  }
+  ctx.fillStyle = hasCounter ? 'rgba(24,95,165,.95)' : 'rgba(255,255,255,.80)';
+  roundRect(cx0, cy0, cw, chh, 13); ctx.fill();
+  if(hasCounter){
+    ctx.strokeStyle = 'rgba(255,255,255,.60)'; ctx.lineWidth = 1.6;
+    roundRect(cx0, cy0, cw, chh, 13); ctx.stroke();
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '500 19px -apple-system,"PingFang SC",sans-serif';
   ctx.fillStyle = hasCounter ? '#FFFFFF' : C.muted;
-  ctx.fillText(hasCounter ? '掀桌子 ×' + counter : '掀桌子 已用', W-91, 89);
+  ctx.fillText(hasCounter ? '被抓到掀桌子 ×' + counter : '被抓到掀桌子 已用', cx0 + cw/2, cy0 + chh/2);
 
   // 局数
   ctx.textAlign = 'left';
