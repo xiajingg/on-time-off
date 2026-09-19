@@ -275,28 +275,83 @@ let roundTime = ROUND_TIME;  // 本局实际使用
 const INSET = 11;        // 贴墙留白
 
 /* ---------- NPC 定义 ---------- */
+/* ------------------------------------------------------------
+   NPC 行为：站点制，不是固定来回
+
+   原来是一个 [A,B] 两点往返 + 端点停顿 —— 走出来就是节拍器。
+   现在每个 NPC 有一组「站点」，每次到站做一个动作，待一会儿，再随机挑下一站。
+
+   动作直接改变威胁等级，这才是重点：
+     走动中   视野 100%，横扫走廊           → 危险
+     站着聊工作 视野 85%，方向锁死不再扫     → 局部危险
+     坐下办公  视野 40%，注意力在屏幕上      → 安全窗口
+   玩家因此有了「等他坐下」这个可等的时机 —— 这正是之前一直缺的张力来源。
+   ------------------------------------------------------------ */
+const ACT = {
+  sit:  { dwell:[7, 15], vis:0.40, alert:2.4 },   // 坐下办公：视野缩到 40%，察觉也慢
+  chat: { dwell:[4, 10], vis:0.85, alert:1.3 }    // 站着聊工作：视野略缩，方向锁死
+};
+const rndRange = a => a[0] + Math.random()*(a[1]-a[0]);
+
 const NPC_DEFS = {
-  // 工位区：横着来回扫，就卡在你出门必经的那条走廊上
+  // 工位区：在两排隔板之间来回，时不时坐下敲两下
   A: { key:'A', kind:'mate', name:'同事 · 老王', room:'desk', item:'paper',
-       path:[{x:100,y:1080},{x:620,y:1080}],
-       speed:72, vision:190, fov:70, alertTime:1.5, pause:1.2 },
-  // 西走廊：竖向长距离巡逻，走一次要 8 秒多
+       speed:72, vision:190, fov:70, alertTime:1.5,
+       stations:[
+         { x:150, y:1078, act:'sit',  face:[0,1] },
+         { x:360, y:1092, act:'chat', face:[0,1] },
+         { x:560, y:1078, act:'sit',  face:[0,1] },
+         { x:170, y:1198, act:'sit',  face:[0,-1] },
+         { x:545, y:1198, act:'chat', face:[0,-1] }
+       ] },
+  // 西走廊：走廊里没桌子，坐下就变成「蹲在快递架边整理」
   B: { key:'B', kind:'mate', name:'同事 · 小李', room:'west', item:'laptop',
-       path:[{x:110,y:300},{x:110,y:900}],
-       speed:70, vision:175, fov:70, alertTime:1.5, pause:1.2 },
+       speed:70, vision:175, fov:70, alertTime:1.5,
+       stations:[
+         { x:112, y:330, act:'chat', face:[0,1] },
+         { x:118, y:520, act:'sit',  face:[-1,0] },
+         { x:112, y:700, act:'chat', face:[0,-1] },
+         { x:112, y:900, act:'sit',  face:[-1,0] }
+       ] },
   // 东走廊
   C: { key:'C', kind:'boss', name:'领导 · 张总', room:'east', item:'coffee',
-       path:[{x:620,y:300},{x:620,y:900}],
-       speed:62, vision:190, fov:80, alertTime:0.9, pause:1.4 },
-  // 开放办公区：堵在「进电梯厅」那个唯一漏斗口前面
+       speed:62, vision:190, fov:80, alertTime:0.9,
+       stations:[
+         { x:612, y:340, act:'chat', face:[0,1] },
+         { x:608, y:668, act:'sit',  face:[1,0] },
+         { x:612, y:880, act:'chat', face:[0,-1] }
+       ] },
+  // 开放办公区：堵在进电梯厅的漏斗口前面
   D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'open', item:'coffee',
-       path:[{x:200,y:225},{x:520,y:225}],
-       speed:68, vision:200, fov:80, alertTime:0.9, pause:1.4 },
+       speed:68, vision:200, fov:80, alertTime:0.9,
+       stations:[
+         { x:265, y:225, act:'chat', face:[1,0] },
+         { x:265, y:340, act:'sit',  face:[0,1] },
+         { x:455, y:340, act:'sit',  face:[0,1] },
+         { x:455, y:228, act:'chat', face:[-1,0] }
+       ] },
   // 档案室：想抄后门绕远路，就得先过他
   E: { key:'E', kind:'mate', name:'同事 · 老周', room:'arch', item:'paper',
-       path:[{x:200,y:870},{x:520,y:870}],
-       speed:68, vision:180, fov:70, alertTime:1.5, pause:1.2 }
+       speed:68, vision:180, fov:70, alertTime:1.5,
+       stations:[
+         { x:360, y:772, act:'chat', face:[0,1] },
+         { x:265, y:875, act:'sit',  face:[0,1] },
+         { x:455, y:875, act:'chat', face:[0,-1] }
+       ] }
 };
+
+// 走动 / 动作时的视野与察觉系数
+function npcVisMul(n){
+  if(n.state !== 'act') return 1;
+  const a = ACT[n.act];
+  return a ? a.vis : 1;
+}
+function npcVision(n){ return n.vision * npcVisMul(n); }
+function npcAlertMul(n){
+  if(n.state !== 'act') return 1;
+  const a = ACT[n.act];
+  return a ? a.alert : 1;
+}
 
 // 难度阶梯：第 1 局保送，逐局加码（对应设计稿里的"首局保送"）
 const ROUND_NPCS = [
@@ -410,20 +465,21 @@ function buildRound(){
     n.vision    = Math.round(d.vision * tune.vision);
     n.speed     = d.speed * tune.speed;
     n.alertTime = d.alertTime * tune.alert;
-    const a = d.path[0], b = d.path[1];
 
-    // 起始相位随机：位置沿巡逻线随机取，朝向随机一端。
-    // 不随机的话每条命都是同一局，玩家死一次就能靠背板过 —— 那样第二局开始就没有张力了。
+    // 起始：随机挑一个站点当出发点，再挑一个不同的当第一个目标。
+    // 不随机的话每局都是同一张局面，玩家死一次就能靠背板过。
     // 随机的是「开局局势」，不变的是「规则可见、锥体可预判」，所以失败依然可归因。
-    const f = 0.18 + Math.random()*0.64;
-    n.x = a.x + (b.x-a.x)*f;
-    n.y = a.y + (b.y-a.y)*f;
-
-    n.idx = Math.random() < 0.5 ? 0 : 1;   // 朝哪一端走
+    const s0i = Math.floor(Math.random()*d.stations.length);
+    const s0 = d.stations[s0i];
+    n.x = s0.x; n.y = s0.y;
+    const cand = [];
+    for(let i=0;i<d.stations.length;i++) if(i !== s0i) cand.push(i);
+    n.idx = cand.length ? cand[Math.floor(Math.random()*cand.length)] : s0i;
     n.state = 'move'; n.wait = 0;
+    n.act = 'chat'; n.turnT = 1; n.phase = 0;
     n.alert = 0; n.seen = false; n.down = 0;
 
-    const t = n.path[n.idx];
+    const t = n.stations[n.idx];
     const dx=t.x-n.x, dy=t.y-n.y, L=Math.hypot(dx,dy)||1;
     n.dir = { x:dx/L, y:dy/L };
     return n;
@@ -444,30 +500,58 @@ function resetRun(){
 /* ============================================================
    NPC 更新
    ============================================================ */
+// 挑下一站：不能原地不动，随机在其余站点里选
+function pickStation(n){
+  const cur = n.idx;
+  const cand = [];
+  for(let i=0;i<n.stations.length;i++) if(i !== cur) cand.push(i);
+  if(!cand.length) return cur;
+  return cand[Math.floor(Math.random()*cand.length)];
+}
+
 function updateNpc(n, dt){
   n.phase = n.phase || 0;
   // 被打倒期间：躺平，不动也不看
   if(n.down > 0){ n.down -= dt; n.phase *= 0.88; return; }
-  if(n.state === 'pause'){
+
+  /* ---- 到站了，正在做事（办公 / 聊天） ---- */
+  if(n.state === 'act'){
     n.wait -= dt;
-    n.phase *= 0.86;                       // 站住时停摆
-    // 停顿的后 35% 提前转头，给玩家一个「他要转身了」的可读信号
-    if(n.wait < n.pause*0.35){
-      const t = n.path[1-n.idx];
-      const dx=t.x-n.x, dy=t.y-n.y, L=Math.hypot(dx,dy)||1;
-      n.dir.x=dx/L; n.dir.y=dy/L;
+    // 坐着敲键盘：小幅快频；站着聊天：几乎不动
+    n.phase += dt * (n.act === 'sit' ? 5.5 : 1.1);
+    // 前 0.5 秒转身朝向站点指定的方向，之后锁死 —— 这是「他在看哪儿」的可读信号
+    const st = n.stations[n.idx];
+    if(st && st.face && n.turnT < 0.5){
+      n.turnT += dt;
+      const k = Math.min(1, dt*7);
+      n.dir.x += (st.face[0] - n.dir.x)*k;
+      n.dir.y += (st.face[1] - n.dir.y)*k;
+      const L = Math.hypot(n.dir.x, n.dir.y) || 1;
+      n.dir.x /= L; n.dir.y /= L;
     }
-    if(n.wait <= 0){ n.state='move'; n.idx = 1-n.idx; }
+    if(n.wait <= 0){
+      n.state = 'move';
+      n.idx = pickStation(n);
+    }
     return;
   }
-  const t = n.path[n.idx];
-  const dx = t.x-n.x, dy = t.y-n.y;
-  const d = Math.hypot(dx,dy);
-  if(d < 2.5){ n.state='pause'; n.wait = n.pause; return; }
+
+  /* ---- 正在走向下一站 ---- */
+  const t = n.stations[n.idx];
+  const dx = t.x - n.x, dy = t.y - n.y;
+  const d = Math.hypot(dx, dy);
+  if(d < 3){
+    // 到站：进入动作状态，随机停留
+    n.state = 'act';
+    n.act = t.act;
+    n.wait = rndRange((ACT[t.act] || ACT.chat).dwell);
+    n.turnT = 0;
+    return;
+  }
   const sp = n.speed*dt;
   n.x += dx/d*sp; n.y += dy/d*sp;
   n.dir.x = dx/d; n.dir.y = dy/d;
-  n.phase += dt * n.speed * 0.16;          // 步伐节奏跟着移速走，走得快的摆得也快
+  n.phase += dt * n.speed * 0.16;
 }
 
 // 该 NPC 此刻能否看见玩家
@@ -476,7 +560,7 @@ function canSee(n){
   if(roomOf(n.x,n.y) !== roomOf(player.x,player.y)) return false;      // 墙挡视线
   const dx = player.x-n.x, dy = player.y-n.y;
   const dist = Math.hypot(dx,dy);
-  if(dist > n.vision) return false;
+  if(dist > npcVision(n)) return false;        // 坐下办公时视野大幅缩短
   const facing = Math.atan2(n.dir.y, n.dir.x);
   const ang = Math.atan2(dy,dx);
   if(Math.abs(normAng(ang-facing)) > n.fov/2 * Math.PI/180) return false;
@@ -542,7 +626,7 @@ function update(dt){
                   Math.hypot(player.x-n.x, player.y-n.y) < P.noiseR;
 
     if(sees){
-      n.alert += dt / n.alertTime;                   // 被看见：按各自速度累积
+      n.alert += dt / (n.alertTime * npcAlertMul(n));                   // 被看见：按各自速度累积
       anyoneSees = true;
     } else if(noisy){
       n.alert += dt / (P.noiseAlert*2.2);            // 只听到跑步声：慢得多
@@ -1223,7 +1307,8 @@ function draw(){
     const a = Math.atan2(n.dir.y, n.dir.x);
     const half = (n.fov/2) * Math.PI/180;
     const danger = n.alert > 0.02;
-    const g = ctx.createRadialGradient(n.x, n.y, 8, n.x, n.y, n.vision);
+    const vis = npcVision(n);   // 坐下办公时锥体明显变短
+    const g = ctx.createRadialGradient(n.x, n.y, 8, n.x, n.y, vis);
     const base = (n.kind==='boss') ? '226,75,74' : '239,159,39';
     const alpha = 0.30 + n.alert*0.34;
     g.addColorStop(0,   'rgba('+base+','+(alpha*0.95)+')');
@@ -1232,7 +1317,7 @@ function draw(){
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.moveTo(n.x, n.y);
-    ctx.arc(n.x, n.y, n.vision, a-half, a+half);
+    ctx.arc(n.x, n.y, vis, a-half, a+half);
     ctx.closePath();
     ctx.fill();
 
@@ -1241,9 +1326,9 @@ function draw(){
     ctx.lineWidth = danger ? 1.6 : 1;
     ctx.beginPath();
     ctx.moveTo(n.x, n.y);
-    ctx.lineTo(n.x + Math.cos(a-half)*n.vision, n.y + Math.sin(a-half)*n.vision);
+    ctx.lineTo(n.x + Math.cos(a-half)*vis, n.y + Math.sin(a-half)*vis);
     ctx.moveTo(n.x, n.y);
-    ctx.lineTo(n.x + Math.cos(a+half)*n.vision, n.y + Math.sin(a+half)*n.vision);
+    ctx.lineTo(n.x + Math.cos(a+half)*vis, n.y + Math.sin(a+half)*vis);
     ctx.stroke();
     ctx.restore();
   }
@@ -1328,13 +1413,59 @@ function draw(){
 
     // 小人：同事夹着文件 / 抱着电脑，领导端着咖啡
     const down = n.down > 0;
+    const sitting  = !down && n.state === 'act' && n.act === 'sit';
+    const chatting = !down && n.state === 'act' && n.act === 'chat';
+
+    // 坐着办公：先在小人身后画一把椅子
+    if(sitting){
+      ctx.save();
+      ctx.translate(n.x - n.dir.x*17, n.y - n.dir.y*17);
+      ctx.rotate(Math.atan2(n.dir.y, n.dir.x));
+      ctx.fillStyle = 'rgba(126,123,114,.60)';
+      roundRect(-10, -12, 20, 24, 6); ctx.fill();
+      ctx.fillStyle = 'rgba(98,95,88,.55)';
+      roundRect(-10, -12, 20, 5, 3); ctx.fill();   // 椅背
+      ctx.restore();
+    }
+
     drawPerson(n.x, n.y, n.dir.x, n.dir.y, isBoss ? ART.boss : ART.mate, {
       item: n.item,
-      scale: 1.18,
+      scale: down ? 1.18 : (sitting ? 1.00 : 1.18),   // 坐下时占位缩一圈
       tilt: down ? Math.PI/2 : 0,            // 被打倒就歪着躺下
-      bob:  down ? 0 : Math.sin(n.phase || 0) * 1.6,
-      sway: down ? 0 : Math.cos((n.phase || 0) * 0.5) * 0.045
+      bob:  down ? 0
+            : (sitting  ? Math.sin(n.phase || 0) * 0.7        // 敲键盘：小幅快频
+            : (chatting ? Math.sin((n.phase || 0) * 0.7) * 0.45   // 聊天：几乎不动
+                        : Math.sin(n.phase || 0) * 1.6)),
+      sway: (down || sitting) ? 0 : Math.cos((n.phase || 0) * 0.5) * 0.045
     });
+
+    // 坐着办公：屏幕溅出来的光点（一眼看出他在盯屏幕，没在看你）
+    if(sitting){
+      const tt = performance.now()/900;
+      for(let i=0;i<3;i++){
+        const f = (tt + i*0.33) % 1;
+        ctx.globalAlpha = 0.10 + 0.34*Math.sin(f*Math.PI);
+        ctx.fillStyle = '#6FA8DC';
+        ctx.fillRect(n.x + n.dir.x*27 - 8 + i*8, n.y + n.dir.y*27 - 1.5, 4.5, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 站着聊工作：头顶冒对话气泡（有警觉条时不画，免得叠在一起）
+    if(chatting && n.alert < 0.06){
+      const bx = n.x, by = n.y - 52;
+      ctx.fillStyle = 'rgba(255,255,255,.94)';
+      roundRect(bx-18, by-11, 36, 22, 8); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(bx-5, by+11); ctx.lineTo(bx+5, by+11); ctx.lineTo(bx, by+18);
+      ctx.closePath(); ctx.fill();
+      const t2 = performance.now()/300;
+      for(let i=0;i<3;i++){
+        const aa = 0.28 + 0.72*Math.max(0, Math.sin(t2 - i*0.8));
+        ctx.fillStyle = 'rgba(60,58,54,' + aa.toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(bx - 7 + i*7, by, 2.7, 0, Math.PI*2); ctx.fill();
+      }
+    }
     if(down){
       // 头顶转圈的星星
       const st = performance.now()/380;
