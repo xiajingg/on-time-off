@@ -186,40 +186,76 @@ const C = {
 };
 
 /* ---------- 关卡几何 ---------- */
-// 可通行房间（矩形并集 = 可行走区域；房间之间的空隙就是墙）
+// 可通行房间（矩形并集 = 可行走区域；房间之间在渲染时描墙线，靠 DOORS 开口连通）
+//
+// 平面结构：左右两条竖直走廊夹着中间的三个房间。
+// 关键设计 —— 中间三个房间【互不相通】，只能从左右走廊进：
+//   所以纵向移动必须选一条走廊，这就是玩家的第一次取舍；
+//   往上最后只能穿过「开放办公区」进电梯厅，这是唯一的漏斗口。
+//
+//   ┌──────────────── 电梯厅（打卡机）────────────────┐   y  30..200
+//   ├──┬──────────────┬───────────────┬──────────────┤
+//   │  │  开放办公区   │               │              │   y 200..490
+//   │西│              │               │      东      │
+//   │走├──────────────┴───────────────┤      走      │   y 490..760
+//   │廊│         茶水间                │      廊      │
+//   │  ├──────────────────────────────┤              │   y 760..1030
+//   │  │         档案室                │              │
+//   ├──┴──────────────┴───────────────┴──────────────┤
+//   │                  工位区                        │   y 1030..1250
+//   └────────────────────────────────────────────────┘
 const ROOMS = [
-  { id:'lobby',    x: 30, y:  30, w:660, h:250, name:'电梯厅' },
-  { id:'corridor', x:230, y: 280, w:260, h:560, name:'走廊'   },
-  { id:'office',   x: 30, y: 840, w:660, h:410, name:'工位区' },
-  { id:'break',    x:486, y: 400, w:184, h:300, name:'茶水间' }
+  { id:'lobby',  x: 30, y:  30, w:660, h:170, name:'电梯厅'     },
+  { id:'west',   x: 30, y: 200, w:120, h:800, name:'西走廊'     },
+  { id:'open',   x:150, y: 200, w:420, h:280, name:'开放办公区'  },
+  { id:'east',   x:570, y: 200, w:120, h:800, name:'东走廊'     },
+  { id:'pantry', x:150, y: 480, w:420, h:260, name:'茶水间'     },
+  { id:'arch',   x:150, y: 740, w:420, h:260, name:'档案室'     },
+  { id:'desk',   x: 30, y:1000, w:660, h:250, name:'工位区'     }
 ];
 
-// 门：把两个房间连起来，渲染时表现为墙上的缺口
+// 门：墙上缺口。注意中间三间彼此【没有】门 —— 这是刻意的，逼玩家选边
 const DOORS = [
-  { x:300, y:240, w:120, h: 80, a:'lobby',    b:'corridor' },
-  { x:300, y:800, w:120, h: 80, a:'corridor', b:'office'   },
-  { x:460, y:490, w: 60, h:120, a:'corridor', b:'break'    }
+  { x: 45, y: 150, w: 90, h:100, a:'lobby',  b:'west'   },   // 跨 y=200
+  { x:585, y: 150, w: 90, h:100, a:'lobby',  b:'east'   },
+  { x:300, y: 150, w:120, h:100, a:'lobby',  b:'open'   },   // 顶部唯一漏斗
+  { x:100, y: 270, w:100, h:140, a:'west',   b:'open'   },   // 跨 x=150
+  { x:520, y: 270, w:100, h:140, a:'east',   b:'open'   },
+  { x:100, y: 550, w:100, h:140, a:'west',   b:'pantry' },
+  { x:520, y: 550, w:100, h:140, a:'east',   b:'pantry' },
+  { x:100, y: 800, w:100, h:140, a:'west',   b:'arch'   },
+  { x:520, y: 800, w:100, h:140, a:'east',   b:'arch'   },
+  { x: 45, y: 950, w: 90, h:110, a:'desk',   b:'west'   },   // 跨 y=1000，底部三个出口
+  { x:300, y: 950, w:120, h:110, a:'desk',   b:'arch'   },
+  { x:585, y: 950, w: 90, h:110, a:'desk',   b:'east'   }
 ];
 
-// 家具（同时挡视线、挡走位）
+// 家具（同时挡视线、挡走位）。位置都躲开了门口，避免一进房间就被卡住
 const COVERS = [
-  { x: 70, y: 950, w:200, h: 70, t:'desk',    label:'工位隔板' },
-  { x:450, y: 950, w:200, h: 70, t:'desk',    label:'工位隔板' },
-  { x:260, y:1130, w:200, h: 70, t:'desk',    label:'工位隔板' },
-  { x:236, y: 410, w: 78, h: 44, t:'rack',    label:'快递架'   },
-  { x:406, y: 620, w: 78, h: 44, t:'plant',   label:'绿植'     },
-  { x:516, y: 426, w: 70, h: 54, t:'counter', label:'咖啡机'   },
-  { x:516, y: 610, w: 70, h: 54, t:'counter', label:'饮水机'   },
-  { x: 72, y: 196, w:150, h: 76, t:'counter', label:'前台'     },
-  { x:498, y: 196, w:150, h: 76, t:'sofa',    label:'休息区'   }
+  // 工位区：两排隔板，中间留一条正面通道
+  { x: 60, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板' },
+  { x:440, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板' },
+  // 开放办公区 / 茶水间 / 档案室：两件错开摆，逼出 Z 字走位
+  { x:180, y: 250, w:170, h: 60, t:'desk',    label:'工位'     },
+  { x:370, y: 370, w:170, h: 60, t:'desk',    label:'工位'     },
+  { x:180, y: 530, w:170, h: 60, t:'counter', label:'咖啡机'   },
+  { x:370, y: 640, w:170, h: 60, t:'sofa',    label:'沙发'     },
+  { x:180, y: 790, w:170, h: 60, t:'desk',    label:'文件柜'   },
+  { x:370, y: 900, w:170, h: 60, t:'desk',    label:'文件柜'   },
+  // 走廊：各放一件，逼你贴着另一侧走
+  { x: 32, y: 500, w: 50, h: 36, t:'rack',    label:'快递架'   },
+  { x:634, y: 650, w: 50, h: 36, t:'rack',    label:'快递架'   },
+  // 电梯厅：把两侧门口让出来
+  { x: 60, y:  80, w:130, h: 56, t:'counter', label:'前台'     },
+  { x:530, y:  80, w:130, h: 56, t:'sofa',    label:'休息区'   }
 ];
 
 // 打卡机
 const MACHINE = { x:330, y:44, w:60, h:44 };
 const WIN_ZONE = { x:360, y: 96, rx:64, ry:52 };
 
-// 出生点
-const SPAWN = { x:360, y:1215 };
+// 出生点：工位区最里面
+const SPAWN = { x:360, y:1210 };
 
 /* ---------- 玩家参数 ---------- */
 const P = {
@@ -237,26 +273,35 @@ const INSET = 11;        // 贴墙留白
 
 /* ---------- NPC 定义 ---------- */
 const NPC_DEFS = {
-  A: { key:'A', kind:'mate', name:'同事 · 老王', room:'office', item:'paper',
-       path:[{x:110,y:1060},{x:610,y:1060}],
+  // 工位区：横着来回扫，就卡在你出门必经的那条走廊上
+  A: { key:'A', kind:'mate', name:'同事 · 老王', room:'desk', item:'paper',
+       path:[{x:100,y:1080},{x:620,y:1080}],
        speed:72, vision:190, fov:70, alertTime:1.5, pause:1.2 },
-  B: { key:'B', kind:'mate', name:'同事 · 小李', room:'corridor', item:'laptop',
-       path:[{x:360,y:350},{x:360,y:660}],
-       speed:64, vision:215, fov:70, alertTime:1.5, pause:1.2 },
-  C: { key:'C', kind:'boss', name:'领导 · 张总', room:'break', item:'coffee',
-       path:[{x:636,y:440},{x:636,y:660}],
-       speed:58, vision:180, fov:80, alertTime:0.9, pause:1.4 },
-  D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'lobby', item:'coffee',
-       path:[{x:110,y:150},{x:600,y:150}],
-       speed:68, vision:200, fov:80, alertTime:0.9, pause:1.4 }
+  // 西走廊：竖向长距离巡逻，走一次要 8 秒多
+  B: { key:'B', kind:'mate', name:'同事 · 小李', room:'west', item:'laptop',
+       path:[{x:110,y:300},{x:110,y:900}],
+       speed:70, vision:175, fov:70, alertTime:1.5, pause:1.2 },
+  // 东走廊
+  C: { key:'C', kind:'boss', name:'领导 · 张总', room:'east', item:'coffee',
+       path:[{x:620,y:300},{x:620,y:900}],
+       speed:62, vision:190, fov:80, alertTime:0.9, pause:1.4 },
+  // 开放办公区：堵在「进电梯厅」那个唯一漏斗口前面
+  D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'open', item:'coffee',
+       path:[{x:200,y:225},{x:520,y:225}],
+       speed:68, vision:200, fov:80, alertTime:0.9, pause:1.4 },
+  // 档案室：想抄后门绕远路，就得先过他
+  E: { key:'E', kind:'mate', name:'同事 · 老周', room:'arch', item:'paper',
+       path:[{x:200,y:870},{x:520,y:870}],
+       speed:68, vision:180, fov:70, alertTime:1.5, pause:1.2 }
 };
 
 // 难度阶梯：第 1 局保送，逐局加码（对应设计稿里的"首局保送"）
 const ROUND_NPCS = [
-  ['A'],
-  ['A','D'],
-  ['A','B','D'],
-  ['A','B','C','D']
+  ['A'],                     // 第 1 局 · 只有工位区一个人
+  ['A','D'],                 // 第 2 局 · 加漏斗口的领导
+  ['A','B','D'],             // 第 3 局 · 加西走廊
+  ['A','B','C','D'],         // 第 4 局 · 加东走廊
+  ['A','B','C','D','E']      // 第 5 局起 · 全员到齐
 ];
 
 // 按局数缩放 NPC 感知能力。
@@ -264,10 +309,11 @@ const ROUND_NPCS = [
 // 第 1 局把视野压到 72% —— 同事·老王视野 190→137，玩家站在工位区中间就不会被看见了。
 // rationale：首局的目的是「教会玩家看视野锥」，不是「考住他」。
 const ROUND_TUNING = [
-  { vision:0.72, speed:0.80, alert:1.9 },   // 第 1 局 · 保送
+  { vision:0.60, speed:0.72, alert:2.2 },   // 第 1 局 · 保送
   { vision:0.85, speed:0.90, alert:1.6 },   // 第 2 局 · 加入领导
-  { vision:0.94, speed:0.96, alert:1.2 },   // 第 3 局 · 加入走廊
-  { vision:1.00, speed:1.00, alert:1.0 }    // 第 4 局起 · 标准
+  { vision:0.94, speed:0.96, alert:1.2 },   // 第 3 局 · 加入西走廊
+  { vision:0.90, speed:0.94, alert:1.1 },   // 第 4 局 · 两条走廊同时有人，软一档
+  { vision:0.96, speed:0.98, alert:1.0 }    // 第 5 局起 · 全员
 ];
 
 /* ---------- 台词（被打断时的话） ---------- */
@@ -812,12 +858,25 @@ function draw(){
   ctx.fillStyle = C.wall;
   ctx.fillRect(0,0,W,H);
 
+  const isHall = id => (id === 'west' || id === 'east');
   for(const r of ROOMS){
-    ctx.fillStyle = (r.id==='corridor') ? C.floorAlt : C.floor;
+    ctx.fillStyle = isHall(r.id) ? C.floorAlt : C.floor;
     roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
   }
   for(const d of DOORS){
-    ctx.fillStyle = C.floor;
+    ctx.fillStyle = C.floorAlt;
+    ctx.fillRect(d.x, d.y, d.w, d.h);
+  }
+
+  // 墙线：先描出每个房间的内轮廓，再用门口色把门洞刷掉 —— 门才看得出来是"开口"
+  ctx.strokeStyle = '#8F8B7C';
+  ctx.lineWidth = 4;
+  for(const r of ROOMS){
+    roundRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 9);
+    ctx.stroke();
+  }
+  for(const d of DOORS){
+    ctx.fillStyle = C.floorAlt;
     ctx.fillRect(d.x, d.y, d.w, d.h);
   }
 
@@ -826,7 +885,15 @@ function draw(){
   ctx.fillStyle = '#BDB9AA';
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   for(const r of ROOMS){
-    ctx.fillText(r.name, r.x + 16, r.y + 14);
+    if(r.id === 'lobby'){
+      // 电梯厅顶部被 HUD 盖住，标签改画到右下角，避开西走廊的标签
+      const prevAlign = ctx.textAlign;
+      ctx.textAlign = 'right';
+      ctx.fillText(r.name, r.x + r.w - 14, r.y + r.h - 20);
+      ctx.textAlign = prevAlign;
+    } else {
+      ctx.fillText(r.name, r.x + 16, r.y + 14);
+    }
   }
 
   /* 视野锥（按房间裁剪，墙外不显示） */
@@ -977,30 +1044,30 @@ function draw(){
   // 倒计时
   const urgent = timeLeft <= 15;
   ctx.fillStyle = 'rgba(255,255,255,.90)';
-  roundRect(W/2-92, 12, 184, 62, 14); ctx.fill();
+  roundRect(W-162, 10, 142, 58, 14); ctx.fill();
   ctx.font = '500 34px ui-monospace,SFMono-Regular,Menlo,monospace';
   ctx.fillStyle = urgent ? C.boss : C.text;
-  ctx.fillText(timeLeft.toFixed(1), W/2, 40);
+  ctx.fillText(timeLeft.toFixed(1), W-91, 36);
   ctx.font = '400 12px -apple-system,"PingFang SC",sans-serif';
   ctx.fillStyle = C.muted;
-  ctx.fillText('距下班还有（秒）', W/2, 63);
+  ctx.fillText('距下班还有（秒）', W-91, 58);
 
   // 局数
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,.90)';
-  roundRect(20, 12, 116, 34, 10); ctx.fill();
+  roundRect(20, 10, 132, 32, 10); ctx.fill();
   ctx.font = '500 14px -apple-system,"PingFang SC",sans-serif';
   ctx.fillStyle = C.text;
-  ctx.fillText('第 ' + round + ' 局 · 限 ' + roundTime + 's', 32, 30);
+  ctx.fillText('第 ' + round + ' 局 · 限 ' + roundTime + 's', 30, 26);
 
   // 当前区域
   const curRoom = roomOf(player.x, player.y);
   const curName = curRoom ? (ROOMS.find(r=>r.id===curRoom)||{}).name : '';
   ctx.fillStyle = 'rgba(255,255,255,.90)';
-  roundRect(20, 54, 116, 30, 10); ctx.fill();
+  roundRect(20, 46, 132, 28, 10); ctx.fill();
   ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
   ctx.fillStyle = C.muted;
-  ctx.fillText('位置：' + curName, 32, 69);
+  ctx.fillText('位置：' + curName, 30, 60);
 
   // 摇杆
   if(joy.active){
