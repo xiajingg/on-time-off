@@ -253,6 +253,34 @@ const COVERS = [
   { x:530, y:  80, w:130, h: 56, t:'sofa',    label:'休息区'   }
 ];
 
+/* ---------- 圆形承重柱 ----------
+   视野是「正前方一条直线」之后，直角墙只能做到「全挡」或「全不挡」——
+   切不出渐进的阴影。圆形的柱子才能让一条直线光束在它后面留出一块锥形盲区。
+   另外真实办公楼本来就有承重柱，摆在这儿也不违和。
+   柱子同时挡走位、挡视线。 */
+const PILLARS = [
+  { x:225, y:165, r:22 }, { x:495, y:165, r:22 },   // 电梯厅：打卡机两侧
+  { x:215, y:355, r:24 }, { x:495, y:258, r:24 },   // 开放办公区
+  { x:230, y:680, r:24 }, { x:490, y:570, r:24 },   // 茶水间
+  { x:230, y:940, r:24 }, { x:490, y:800, r:24 }    // 档案室
+];
+
+// 注意：走廊（98px 宽）里【不能】放柱子 —— 柱子吃掉约 60px，同事的光束又占 50px，
+// 两条叠起来几乎把路堵死（实测机器人会在走廊卡 20 秒）。圆形的遮蔽物只放在 400px 宽的房间里。
+//
+// 光束半宽：全宽约两个身位，贴着墙还能挤过去
+function beamHalf(n){ return n.kind === 'boss' ? 30 : 25; }
+
+// 线段与圆是否相交（用于「柱子挡不挡视线」）
+function segCircle(x1,y1,x2,y2,c){
+  const dx = x2-x1, dy = y2-y1;
+  const L2 = dx*dx + dy*dy;
+  let t = L2 ? ((c.x-x1)*dx + (c.y-y1)*dy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const px = x1 + dx*t, py = y1 + dy*t;
+  return Math.hypot(px-c.x, py-c.y) < c.r;
+}
+
 // 打卡机
 const MACHINE = { x:300, y:40, w:120, h:58 };   // 放大，好把「下班打卡」四个字写上去
 const WIN_ZONE = { x:360, y: 96, rx:64, ry:52 };
@@ -418,6 +446,7 @@ function walkable(x,y){
   if(!ok) for(const d of DOORS) if(x>=d.x+INSET && x<=d.x+d.w-INSET && y>=d.y+INSET && y<=d.y+d.h-INSET){ ok=true; break; }
   if(!ok) return false;
   for(const c of COVERS) if(x>c.x-9 && x<c.x+c.w+9 && y>c.y-9 && y<c.y+c.h+9) return false;
+  for(const p of PILLARS) if(Math.hypot(x-p.x, y-p.y) < p.r + 10) return false;   // 承重柱
   return true;
 }
 
@@ -558,13 +587,18 @@ function updateNpc(n, dt){
 function canSee(n){
   if(n.down > 0) return false;                                          // 躺平中，看不见任何东西
   if(roomOf(n.x,n.y) !== roomOf(player.x,player.y)) return false;      // 墙挡视线
+  // 「正前方一条直线」：把玩家位置投影到朝向上，判断是否落在光束范围内
+  //   along = 沿朝向的距离（必须在 0 ~ 视野长度 之间）
+  //   side  = 垂直偏移（必须小于光束半宽）—— 这就是直角墙切不出来的那块
   const dx = player.x-n.x, dy = player.y-n.y;
-  const dist = Math.hypot(dx,dy);
-  if(dist > npcVision(n)) return false;        // 坐下办公时视野大幅缩短
-  const facing = Math.atan2(n.dir.y, n.dir.x);
-  const ang = Math.atan2(dy,dx);
-  if(Math.abs(normAng(ang-facing)) > n.fov/2 * Math.PI/180) return false;
-  for(const c of COVERS) if(segRect(n.x,n.y,player.x,player.y,c)) return false;  // 家具挡视线
+  const along = dx*n.dir.x + dy*n.dir.y;
+  const side  = Math.abs(dx*(-n.dir.y) + dy*n.dir.x);
+  const range = npcVision(n);                    // 坐下办公时这条线会明显变短
+  const hw    = beamHalf(n);
+  if(along <= 0 || along > range) return false;
+  if(side > hw) return false;
+  for(const c of COVERS)  if(segRect(n.x,n.y,player.x,player.y,c)) return false;   // 家具挡
+  for(const p of PILLARS) if(segCircle(n.x,n.y,player.x,player.y,p)) return false; // 柱子挡
   return true;
 }
 
@@ -1296,40 +1330,40 @@ function draw(){
     }
   }
 
-  /* 视野锥（按房间裁剪，墙外不显示） */
+  /* 视野：正前方一条直线光束（按房间裁剪，墙外不显示）。
+   家具和承重柱在这一层之后绘制，所以它们会自然地把光束遮掉。 */
   for(const n of npcs){
-    if(n.down > 0) continue;                 // 躺着的人没有视野锥
+    if(n.down > 0) continue;                 // 躺着的人没有视野
     const room = ROOMS.find(r=> r.id === n.room);
     if(!room) continue;
     ctx.save();
     ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
 
     const a = Math.atan2(n.dir.y, n.dir.x);
-    const half = (n.fov/2) * Math.PI/180;
     const danger = n.alert > 0.02;
-    const vis = npcVision(n);   // 坐下办公时锥体明显变短
-    const g = ctx.createRadialGradient(n.x, n.y, 8, n.x, n.y, vis);
+    const vis = npcVision(n);                // 坐下办公时这条线明显变短
+    const hw  = beamHalf(n);
     const base = (n.kind==='boss') ? '226,75,74' : '239,159,39';
     const alpha = 0.30 + n.alert*0.34;
-    g.addColorStop(0,   'rgba('+base+','+(alpha*0.95)+')');
-    g.addColorStop(0.55,'rgba('+base+','+(alpha*0.55)+')');
-    g.addColorStop(1,   'rgba('+base+',0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.moveTo(n.x, n.y);
-    ctx.arc(n.x, n.y, vis, a-half, a+half);
-    ctx.closePath();
-    ctx.fill();
 
-    // 锥体边缘描线，让边界"看得见"，避免玩家觉得判定模糊
-    ctx.strokeStyle = danger ? 'rgba('+base+',0.85)' : 'rgba('+base+',0.42)';
-    ctx.lineWidth = danger ? 1.6 : 1;
+    ctx.save();
+    ctx.translate(n.x, n.y);
+    ctx.rotate(a);
+    // 沿光束方向做渐变：近端实、远端虚
+    const g = ctx.createLinearGradient(0, 0, vis, 0);
+    g.addColorStop(0,    'rgba('+base+','+(alpha*0.95).toFixed(3)+')');
+    g.addColorStop(0.62, 'rgba('+base+','+(alpha*0.52).toFixed(3)+')');
+    g.addColorStop(1,    'rgba('+base+',0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, -hw, vis, hw*2);
+    // 两条边线：把判定边界画出来，玩家才不会觉得「莫名其妙被看见」
+    ctx.strokeStyle = danger ? 'rgba('+base+',0.80)' : 'rgba('+base+',0.36)';
+    ctx.lineWidth = danger ? 2 : 1.2;
     ctx.beginPath();
-    ctx.moveTo(n.x, n.y);
-    ctx.lineTo(n.x + Math.cos(a-half)*vis, n.y + Math.sin(a-half)*vis);
-    ctx.moveTo(n.x, n.y);
-    ctx.lineTo(n.x + Math.cos(a+half)*vis, n.y + Math.sin(a+half)*vis);
+    ctx.moveTo(0, -hw); ctx.lineTo(vis, -hw);
+    ctx.moveTo(0,  hw); ctx.lineTo(vis,  hw);
     ctx.stroke();
+    ctx.restore();
     ctx.restore();
   }
 
@@ -1354,6 +1388,18 @@ function draw(){
     }
     // 桌面上的东西（咖啡杯 / 文件 / 笔记本）
     dressSurface(c);
+  }
+
+  /* 承重柱：圆形，同时挡走位和挡视线 */
+  for(const p of PILLARS){
+    ctx.fillStyle = '#D8D5C9';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#A8A498'; ctx.lineWidth = 1.4; ctx.stroke();
+    // 柱面高光，让它是「一根柱子」而不是一个圆点
+    ctx.strokeStyle = 'rgba(255,255,255,.65)'; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r*0.62, -Math.PI*0.85, -Math.PI*0.15); ctx.stroke();
+    ctx.fillStyle = 'rgba(168,164,152,.30)';
+    ctx.beginPath(); ctx.arc(p.x + p.r*0.22, p.y + p.r*0.22, p.r*0.34, 0, Math.PI*2); ctx.fill();
   }
 
   /* 打卡机（终点）：屏幕上直接写「下班打卡」，玩家一眼就知道往哪走 */
