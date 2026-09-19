@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#F1EFE8">
+<title>按时下班 · 玩法原型 v0.1</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#E8E6DE;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    color:#2C2C2A;
+    user-select:none; -webkit-user-select:none;
+  }
+  #stage {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:#C9C6BB; border-radius:14px; overflow:hidden;
+    box-shadow:0 8px 32px rgba(0,0,0,.14);
+  }
+  canvas { display:block; touch-action:none; }
+
+  .overlay {
+    position:absolute; inset:0; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(232,230,222,.86); backdrop-filter:blur(3px);
+    padding:24px;
+  }
+  .overlay.on { display:flex; }
+
+  .card {
+    width:100%; max-width:420px;
+    background:#FFFFFF; border-radius:16px;
+    padding:26px 24px 22px;
+    box-shadow:0 6px 28px rgba(0,0,0,.13);
+  }
+  .card .kicker { font-size:13px; color:#6B6863; letter-spacing:.4px; }
+  .card h1 { font-size:24px; font-weight:500; line-height:1.3; margin:8px 0 4px; }
+  .card .line {
+    margin-top:18px; padding:16px 18px; border-radius:12px;
+    background:#FCEBEB; border-left:3px solid #A32D2D;
+    font-size:17px; line-height:1.55; color:#501313;
+  }
+  .card .line.win { background:#E1F5EE; border-left-color:#0F6E56; color:#04342C; }
+  .card .meta { margin-top:16px; font-size:14px; color:#6B6863; line-height:1.9; }
+  .card .meta b { font-weight:500; color:#2C2C2A; }
+  .card .why {
+    margin-top:14px; padding:12px 14px; border-radius:10px;
+    background:#F1EFE8; font-size:13px; line-height:1.7; color:#5F5E5A;
+  }
+  .btns { margin-top:20px; display:flex; gap:10px; }
+  button {
+    flex:1; border:0; border-radius:12px; cursor:pointer;
+    padding:15px 12px; font-size:16px; font-family:inherit;
+    background:#2C2C2A; color:#FFFFFF; transition:transform .08s, opacity .15s;
+  }
+  button.ghost { background:#F1EFE8; color:#2C2C2A; flex:0 0 108px; }
+  button.alt { background:#0F6E56; }
+  .btns.dual button { font-size:15px; padding:15px 8px; }
+  button:active { transform:scale(.975); opacity:.9; }
+  .keys { margin-top:16px; font-size:12.5px; color:#8A8778; line-height:1.85; }
+  kbd {
+    display:inline-block; padding:1px 6px; border-radius:5px;
+    background:#F1EFE8; border:1px solid #D3D1C7;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:#444441;
+  }
+  .rules { max-width:420px; }
+  .rules h2 { font-size:16px; font-weight:500; margin:18px 0 8px; }
+  .rules p { font-size:14px; line-height:1.85; color:#444441; }
+  .rules .tag {
+    display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px;
+    background:#F1EFE8; color:#5F5E5A; margin:0 6px 6px 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+
+  <!-- 开始页 -->
+  <div class="overlay on" id="ovStart">
+    <div class="card">
+      <div class="kicker">玩法原型 v0.1</div>
+      <h1>按时下班</h1>
+      <div style="font-size:14px;color:#5F5E5A;line-height:1.8;margin-top:6px;">
+        18:00 差 1 分钟。从工位走到打卡机，<br>别被任何同事或领导看见。
+      </div>
+
+      <div class="rules">
+        <h2>怎么玩</h2>
+        <p>
+          <span class="tag">左半屏拖动摇杆</span>
+          <span class="tag">右下角按住跑步</span>
+          <span class="tag">红色扇形＝视野</span>
+        </p>
+        <p style="margin-top:6px;">
+          身体进红区，头顶会冒 <b>？</b> 开始积累警觉条；<b>走出去警觉回落，还能救回来</b>。
+          警觉条满、或者凉透了撞上人 → 当场加班。
+        </p>
+        <h2>这一版要验证的事</h2>
+        <p>
+          ① 被抓住的那一刻，你能不能说出自己哪一步走错了。<br>
+          ② 摇杆贴边走过视野边缘，是"紧张"还是"手残"。
+        </p>
+      </div>
+
+      <div class="btns dual">
+        <button id="btnStart">60 秒版</button>
+        <button class="alt" id="btnStartTight">32 秒版（推荐）</button>
+      </div>
+      <div class="why" style="margin-top:12px;">
+        两个都试一局，你会立刻感觉到差别：<b>60 秒版一路走完还剩 40 多秒</b>，
+        计时器形同虚设；<b>32 秒版</b>才真的逼你在窗口前做取舍。
+        最短路径实测 1220px，纯走 13.9 秒。
+      </div>
+      <div class="keys">
+        电脑上测试用 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · <kbd>Shift</kbd> 跑 · <kbd>R</kbd> 重开
+      </div>
+    </div>
+  </div>
+
+  <!-- 被抓 -->
+  <div class="overlay" id="ovLose">
+    <div class="card">
+      <div class="kicker" id="loseWho">被 同事·老王 看见了</div>
+      <div class="line" id="loseLine">「哎小李，正好，帮我看个东西，两分钟。」</div>
+      <div class="meta" id="loseMeta"></div>
+      <div class="why" id="loseWhy"></div>
+      <div class="btns">
+        <button id="btnRetry">再来一次</button>
+        <button class="ghost" id="btnReset">回到第 1 局</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通关 -->
+  <div class="overlay" id="ovWin">
+    <div class="card">
+      <div class="kicker">18:00 · 打卡成功</div>
+      <div class="line win" id="winLine">下班了。</div>
+      <div class="meta" id="winMeta"></div>
+      <div class="why" id="winWhy"></div>
+      <div class="btns">
+        <button id="btnRetry2">下一局</button>
+        <button class="ghost" id="btnReset2">回到第 1 局</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   按时下班 · 玩法原型 v0.1
+   目标：验证「视野锥 + 警觉条 + 贴边通过」这套手感
+   ============================================================ */
+
+/* ---------- 世界尺寸（逻辑坐标，与屏幕无关） ---------- */
+const W = 720, H = 1280;
+
+/* ---------- 配色 ---------- */
+const C = {
+  wall:      '#C9C6BB',
+  wallDark:  '#B4B0A2',
+  floor:     '#F7F6F1',
+  floorAlt:  '#F0EEE6',
+  edge:      '#9C9887',
+  text:      '#2C2C2A',
+  muted:     '#6B6863',
+  faint:     '#A8A498',
+  player:    '#185FA5',
+  playerLt:  '#B5D4F4',
+  mate:      '#BA7517',
+  mateLt:    '#FAC775',
+  boss:      '#A32D2D',
+  bossLt:    '#F7C1C1',
+  coneMate:  '#EF9F27',
+  coneBoss:  '#E24B4A',
+  cover:     '#E4E1D6',
+  coverLine: '#B9B5A6',
+  machine:   '#2C2C2A',
+  good:      '#3B6D11'
+};
+
+/* ---------- 关卡几何 ---------- */
+// 可通行房间（矩形并集 = 可行走区域；房间之间的空隙就是墙）
+const ROOMS = [
+  { id:'lobby',    x: 30, y:  30, w:660, h:250, name:'电梯厅' },
+  { id:'corridor', x:230, y: 280, w:260, h:560, name:'走廊'   },
+  { id:'office',   x: 30, y: 840, w:660, h:410, name:'工位区' },
+  { id:'break',    x:486, y: 400, w:184, h:300, name:'茶水间' }
+];
+
+// 门：把两个房间连起来，渲染时表现为墙上的缺口
+const DOORS = [
+  { x:300, y:240, w:120, h: 80, a:'lobby',    b:'corridor' },
+  { x:300, y:800, w:120, h: 80, a:'corridor', b:'office'   },
+  { x:460, y:490, w: 60, h:120, a:'corridor', b:'break'    }
+];
+
+// 家具（同时挡视线、挡走位）
+const COVERS = [
+  { x: 70, y: 950, w:200, h: 70, t:'desk',    label:'工位隔板' },
+  { x:450, y: 950, w:200, h: 70, t:'desk',    label:'工位隔板' },
+  { x:260, y:1130, w:200, h: 70, t:'desk',    label:'工位隔板' },
+  { x:236, y: 410, w: 78, h: 44, t:'rack',    label:'快递架'   },
+  { x:406, y: 620, w: 78, h: 44, t:'plant',   label:'绿植'     },
+  { x:516, y: 426, w: 70, h: 54, t:'counter', label:'咖啡机'   },
+  { x:516, y: 610, w: 70, h: 54, t:'counter', label:'饮水机'   },
+  { x: 72, y: 196, w:150, h: 76, t:'counter', label:'前台'     },
+  { x:498, y: 196, w:150, h: 76, t:'sofa',    label:'休息区'   }
+];
+
+// 打卡机
+const MACHINE = { x:330, y:44, w:60, h:44 };
+const WIN_ZONE = { x:360, y: 96, rx:64, ry:52 };
+
+// 出生点
+const SPAWN = { x:360, y:1215 };
+
+/* ---------- 玩家参数 ---------- */
+const P = {
+  r: 12,
+  walk: 88,     // px/s
+  run: 152,     // px/s
+  noiseR: 240,  // 跑动噪音半径
+  noiseAlert: 2.6 // 噪音把警觉条从 0 攒满所需秒数
+};
+
+const ROUND_TIME = 60;   // 单局秒数（原始设定：距离下班还有 1 分钟）
+const ROUND_TIME_TIGHT = 32; // 实测推荐值：最短路径 1220px ÷ 88px/s ≈ 14s，留 18s 等窗口
+let roundTime = ROUND_TIME;  // 本局实际使用
+const INSET = 11;        // 贴墙留白
+
+/* ---------- NPC 定义 ---------- */
+const NPC_DEFS = {
+  A: { key:'A', kind:'mate', name:'同事 · 老王', room:'office', item:'paper',
+       path:[{x:110,y:1060},{x:610,y:1060}],
+       speed:72, vision:190, fov:70, alertTime:1.5, pause:1.2 },
+  B: { key:'B', kind:'mate', name:'同事 · 小李', room:'corridor', item:'laptop',
+       path:[{x:360,y:350},{x:360,y:660}],
+       speed:64, vision:215, fov:70, alertTime:1.5, pause:1.2 },
+  C: { key:'C', kind:'boss', name:'领导 · 张总', room:'break', item:'coffee',
+       path:[{x:636,y:440},{x:636,y:660}],
+       speed:58, vision:180, fov:80, alertTime:0.9, pause:1.4 },
+  D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'lobby', item:'coffee',
+       path:[{x:110,y:150},{x:600,y:150}],
+       speed:68, vision:200, fov:80, alertTime:0.9, pause:1.4 }
+};
+
+// 难度阶梯：第 1 局保送，逐局加码（对应设计稿里的"首局保送"）
+const ROUND_NPCS = [
+  ['A'],
+  ['A','D'],
+  ['A','B','D'],
+  ['A','B','C','D']
+];
+
+// 按局数缩放 NPC 感知能力。
+// 实测（无头浏览器跑真实游戏代码）：不缩放时第 1 局机器人只过 2/5，"保送"没做到。
+// 第 1 局把视野压到 72% —— 同事·老王视野 190→137，玩家站在工位区中间就不会被看见了。
+// rationale：首局的目的是「教会玩家看视野锥」，不是「考住他」。
+const ROUND_TUNING = [
+  { vision:0.72, speed:0.80, alert:1.9 },   // 第 1 局 · 保送
+  { vision:0.85, speed:0.90, alert:1.6 },   // 第 2 局 · 加入领导
+  { vision:0.94, speed:0.96, alert:1.2 },   // 第 3 局 · 加入走廊
+  { vision:1.00, speed:1.00, alert:1.0 }    // 第 4 局起 · 标准
+];
+
+/* ---------- 台词（被打断时的话） ---------- */
+const LINES = {
+  mate: [
+    '「哎小李，正好，帮我看个东西，两分钟。」',
+    '「走这么急？来来来搭把手，很快的。」',
+    '「你下班了？那这个先给你，明天要用。」'
+  ],
+  boss: [
+    '「来我办公室一下。」',
+    '「正好，这个方案我们再过一遍。」',
+    '「今天走得挺早啊。」'
+  ]
+};
+
+/* ============================================================
+   工具函数
+   ============================================================ */
+const clamp = (v,a,b)=> v<a?a:(v>b?b:v);
+const rnd = a => a[Math.floor(Math.random()*a.length)];
+function normAng(a){ while(a> Math.PI) a-=Math.PI*2; while(a<-Math.PI) a+=Math.PI*2; return a; }
+
+// 点是否在矩形内
+function inRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
+
+// 线段与矩形是否相交（Liang-Barsky）
+function segRect(x1,y1,x2,y2,r){
+  let t0=0, t1=1;
+  const dx=x2-x1, dy=y2-y1;
+  const p=[-dx,dx,-dy,dy];
+  const q=[x1-r.x, r.x+r.w-x1, y1-r.y, r.y+r.h-y1];
+  for(let i=0;i<4;i++){
+    if(p[i]===0){ if(q[i]<0) return false; }
+    else {
+      const t=q[i]/p[i];
+      if(p[i]<0){ if(t>t1) return false; if(t>t0) t0=t; }
+      else      { if(t<t0) return false; if(t<t1) t1=t; }
+    }
+  }
+  return true;
+}
+
+// 玩家中心是否可站（房间并集内 + 不压家具）
+function walkable(x,y){
+  let ok=false;
+  for(const r of ROOMS) if(x>=r.x+INSET && x<=r.x+r.w-INSET && y>=r.y+INSET && y<=r.y+r.h-INSET){ ok=true; break; }
+  if(!ok) for(const d of DOORS) if(x>=d.x+INSET && x<=d.x+d.w-INSET && y>=d.y+INSET && y<=d.y+d.h-INSET){ ok=true; break; }
+  if(!ok) return false;
+  for(const c of COVERS) if(x>c.x-9 && x<c.x+c.w+9 && y>c.y-9 && y<c.y+c.h+9) return false;
+  return true;
+}
+
+// 点属于哪个房间（用于视线遮挡：不在同一房间 = 被墙挡住）
+function roomOf(x,y){
+  for(const r of ROOMS) if(inRect(x,y,r)) return r.id;
+  for(const d of DOORS) if(inRect(x,y,d)) return d.a;
+  return null;
+}
+
+/* ============================================================
+   状态
+   ============================================================ */
+let state = 'menu';      // menu | playing | caught | escaped
+let bestUsed = null;   // 本次会话最快通关
+let round = 1;
+let timeLeft = ROUND_TIME;
+let elapsed = 0;
+let last = 0;
+let shake = 0;
+let flashVignette = 0;
+
+const player = { x:SPAWN.x, y:SPAWN.y, dir:{x:0,y:-1}, moving:false, running:false, phase:0 };
+let npcs = [];
+
+function buildRound(){
+  const idx = Math.min(round-1, ROUND_NPCS.length-1);
+  const keys = ROUND_NPCS[idx];
+  const tune = ROUND_TUNING[idx];
+  npcs = keys.map(k=>{
+    const d = NPC_DEFS[k];
+    const n = Object.assign({}, d);
+    // 按局数缩放：视野 / 速度 / 警觉时间
+    n.vision    = Math.round(d.vision * tune.vision);
+    n.speed     = d.speed * tune.speed;
+    n.alertTime = d.alertTime * tune.alert;
+    const a = d.path[0], b = d.path[1];
+
+    // 起始相位随机：位置沿巡逻线随机取，朝向随机一端。
+    // 不随机的话每条命都是同一局，玩家死一次就能靠背板过 —— 那样第二局开始就没有张力了。
+    // 随机的是「开局局势」，不变的是「规则可见、锥体可预判」，所以失败依然可归因。
+    const f = 0.18 + Math.random()*0.64;
+    n.x = a.x + (b.x-a.x)*f;
+    n.y = a.y + (b.y-a.y)*f;
+
+    n.idx = Math.random() < 0.5 ? 0 : 1;   // 朝哪一端走
+    n.state = 'move'; n.wait = 0;
+    n.alert = 0; n.seen = false;
+
+    const t = n.path[n.idx];
+    const dx=t.x-n.x, dy=t.y-n.y, L=Math.hypot(dx,dy)||1;
+    n.dir = { x:dx/L, y:dy/L };
+    return n;
+  });
+}
+
+function resetRun(){
+  timeLeft = roundTime; elapsed = 0;
+  player.x = SPAWN.x; player.y = SPAWN.y;
+  player.dir = {x:0,y:-1}; player.moving=false; player.running=false;
+  shake=0; flashVignette=0;
+  buildRound();
+  joy.active=false; joy.id=null; keysDown.clear();
+}
+
+/* ============================================================
+   NPC 更新
+   ============================================================ */
+function updateNpc(n, dt){
+  n.phase = n.phase || 0;
+  if(n.state === 'pause'){
+    n.wait -= dt;
+    n.phase *= 0.86;                       // 站住时停摆
+    // 停顿的后 35% 提前转头，给玩家一个「他要转身了」的可读信号
+    if(n.wait < n.pause*0.35){
+      const t = n.path[1-n.idx];
+      const dx=t.x-n.x, dy=t.y-n.y, L=Math.hypot(dx,dy)||1;
+      n.dir.x=dx/L; n.dir.y=dy/L;
+    }
+    if(n.wait <= 0){ n.state='move'; n.idx = 1-n.idx; }
+    return;
+  }
+  const t = n.path[n.idx];
+  const dx = t.x-n.x, dy = t.y-n.y;
+  const d = Math.hypot(dx,dy);
+  if(d < 2.5){ n.state='pause'; n.wait = n.pause; return; }
+  const sp = n.speed*dt;
+  n.x += dx/d*sp; n.y += dy/d*sp;
+  n.dir.x = dx/d; n.dir.y = dy/d;
+  n.phase += dt * n.speed * 0.16;          // 步伐节奏跟着移速走，走得快的摆得也快
+}
+
+// 该 NPC 此刻能否看见玩家
+function canSee(n){
+  if(roomOf(n.x,n.y) !== roomOf(player.x,player.y)) return false;      // 墙挡视线
+  const dx = player.x-n.x, dy = player.y-n.y;
+  const dist = Math.hypot(dx,dy);
+  if(dist > n.vision) return false;
+  const facing = Math.atan2(n.dir.y, n.dir.x);
+  const ang = Math.atan2(dy,dx);
+  if(Math.abs(normAng(ang-facing)) > n.fov/2 * Math.PI/180) return false;
+  for(const c of COVERS) if(segRect(n.x,n.y,player.x,player.y,c)) return false;  // 家具挡视线
+  return true;
+}
+
+/* ============================================================
+   主更新
+   ============================================================ */
+function update(dt){
+  if(state !== 'playing') return;
+
+  elapsed += dt;
+  timeLeft -= dt;
+  if(timeLeft <= 0){ timeLeft = 0; finish(false, null, '时间到'); return; }
+
+  /* --- 玩家移动 --- */
+  let ix = 0, iy = 0;
+  if(keysDown.has('w')||keysDown.has('arrowup'))    iy -= 1;
+  if(keysDown.has('s')||keysDown.has('arrowdown'))  iy += 1;
+  if(keysDown.has('a')||keysDown.has('arrowleft'))  ix -= 1;
+  if(keysDown.has('d')||keysDown.has('arrowright')) ix += 1;
+
+  if(joy.active && joy.mag > 0.14){
+    ix = joy.dx * joy.mag; iy = joy.dy * joy.mag;
+    const L = Math.hypot(ix,iy);
+    if(L > 1){ ix/=L; iy/=L; }
+  }
+  if(ix || iy){
+    const L = Math.hypot(ix,iy) || 1;
+    ix/=L; iy/=L;
+    player.dir.x = ix; player.dir.y = iy;
+    player.moving = true;
+  } else {
+    player.moving = false;
+  }
+  // 走路相位：驱动小人的上下起伏与肩膀微摆；停下时快速衰减，不要一直抖
+  player.phase = player.moving
+    ? player.phase + dt * (player.running ? 15 : 9.5)
+    : player.phase * 0.84;
+
+  player.running = (keysDown.has('shift') || runBtn.active) && player.moving;
+  const spd = (player.running ? P.run : P.walk) * (joystickMagnitudeScale());
+
+  if(player.moving){
+    const nx = player.x + ix*spd*dt;
+    const ny = player.y + iy*spd*dt;
+    if(walkable(nx, player.y)) player.x = nx;       // 分轴走位 → 撞墙自动沿墙滑
+    if(walkable(player.x, ny)) player.y = ny;
+  }
+
+  /* --- NPC --- */
+  let maxAlert = 0, anyoneSees = false;
+  for(const n of npcs){
+    updateNpc(n, dt);
+
+    const sees = canSee(n);
+    const noisy = player.running && !sees &&
+                  roomOf(n.x,n.y) === roomOf(player.x,player.y) &&
+                  Math.hypot(player.x-n.x, player.y-n.y) < P.noiseR;
+
+    if(sees){
+      n.alert += dt / n.alertTime;                   // 被看见：按各自速度累积
+      anyoneSees = true;
+    } else if(noisy){
+      n.alert += dt / (P.noiseAlert*2.2);            // 只听到跑步声：慢得多
+    } else {
+      n.alert -= dt / (n.alertTime*0.5);             // 脱离视线：2 倍速回落
+    }
+    n.alert = clamp(n.alert, 0, 1);
+    maxAlert = Math.max(maxAlert, n.alert);
+
+    if(n.alert >= 1){ finish(false, n, '被发现'); return; }
+  }
+
+  // 撞上身体 = 立即加班
+  for(const n of npcs){
+    if(Math.hypot(player.x-n.x, player.y-n.y) < 26){ finish(false, n, '撞上了'); return; }
+  }
+
+  /* --- 到打卡机 --- */
+  const dxm = Math.abs(player.x - WIN_ZONE.x);
+  const dym = Math.abs(player.y - WIN_ZONE.y);
+  if(dxm < WIN_ZONE.rx && dym < WIN_ZONE.ry){ finish(true, null, null); return; }
+
+  /* --- 反馈 --- */
+  flashVignette = anyoneSees ? Math.min(1, flashVignette + dt*3) : Math.max(0, flashVignette - dt*2.2);
+  if(maxAlert > 0.55) shake = Math.max(shake, (maxAlert-0.55)*10);
+  shake = Math.max(0, shake - dt*22);
+}
+
+// 摇杆推到底给一点点速度加成，但不能变成"推得越远越好"的压力
+function joystickMagnitudeScale(){
+  if(!joy.active) return 1;
+  return 0.86 + 0.14 * clamp(joy.mag,0,1);
+}
+
+/* ============================================================
+   结算
+   ============================================================ */
+function finish(win, npc, reason){
+  state = win ? 'escaped' : 'caught';
+  const used = roundTime - timeLeft;
+  if(win && (bestUsed === null || used < bestUsed)) bestUsed = used;
+
+  if(win){
+    document.getElementById('winLine').textContent = '「下班了。」';
+    document.getElementById('winMeta').innerHTML =
+      '本局用时 <b>' + used.toFixed(1) + ' 秒</b>　·　还剩 <b>' + timeLeft.toFixed(1) + ' 秒</b><br>' +
+      '第 <b>' + round + '</b> 局 · ' + npcs.length + ' 个 NPC 巡逻中' +
+      (bestUsed !== null ? '　·　本场最快 <b>' + bestUsed.toFixed(1) + ' 秒</b>' : '');
+    document.getElementById('winWhy').innerHTML =
+      '自检：这一局你是<b>算准了窗口</b>过的，还是<b>一路小跑撞运气</b>？' +
+      '如果是后者，说明巡逻周期还太宽，下一版把 pause 从 1.2s 压到 0.7s。';
+    show('ovWin');
+  } else {
+    const who = npc ? npc.name : '时间';
+    const room = roomOf(player.x, player.y);
+    const roomName = room ? (ROOMS.find(r=>r.id===room)||{}).name : '门口';
+    document.getElementById('loseWho').textContent =
+      npc ? ('在 ' + roomName + ' 被 ' + npc.name + ' 看见了') : '到点没走出去';
+    document.getElementById('loseLine').textContent = npc ? rnd(LINES[npc.kind]) : '「今天的活儿先放这儿。」';
+    document.getElementById('loseMeta').innerHTML =
+      '被抓时还剩 <b>' + timeLeft.toFixed(1) + ' 秒</b>　·　已经走了 <b>' + used.toFixed(1) + ' 秒</b><br>' +
+      '第 <b>' + round + '</b> 局 · ' + reason;
+    document.getElementById('loseWhy').innerHTML =
+      '自检：你<b>知道自己哪一步错了吗</b>？<br>' +
+      '如果你能一句话说清（"我不该在老王转身前冲中间那条道"），说明判定可归因，设计成立。<br>' +
+      '如果你只觉得"莫名其妙就死了"，那要改的是反馈通道，不是难度。';
+    show('ovLose');
+  }
+}
+
+function show(id){
+  ['ovStart','ovLose','ovWin'].forEach(x=> document.getElementById(x).classList.remove('on'));
+  if(id) document.getElementById(id).classList.add('on');
+}
+
+/* ============================================================
+   渲染
+   ============================================================ */
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const stage = document.getElementById('stage');
+let DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function resize(){
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const s = Math.min(vw/W, vh/H) * 0.985;
+  const dw = Math.round(W*s), dh = Math.round(H*s);
+  stage.style.width = dw+'px';
+  stage.style.height = dh+'px';
+  cv.style.width = dw+'px';
+  cv.style.height = dh+'px';
+  cv.width  = Math.round(W*DPR);
+  cv.height = Math.round(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+/* ============================================================
+   小人绘制
+   俯视角：看到的是「肩 + 头顶」。+x 是朝前方向，道具在身前、背包在身后。
+   ============================================================ */
+const SKIN   = '#E8B98A';   // 肤色
+const SKIN_D = '#CF9C68';
+const HAIR_D = '#2C2C2A';   // 黑发（打工人）
+const HAIR_G = '#8E8B84';   // 灰白（领导）
+
+const ART = {
+  player: { body:'#3590E0', dark:'#1B5A9E', skin:SKIN,   hair:HAIR_D },
+  mate:   { body:'#E3A62C', dark:'#A87018', skin:SKIN,   hair:HAIR_D },
+  boss:   { body:'#C74444', dark:'#7E2525', skin:SKIN,   hair:HAIR_G, suit:true }
+};
+
+// 俯视小人的体型（碰撞用的是 P.r，这里只是画多大）
+// 配比要点：肩要比头宽出一圈，且头不能顶到身体前缘 —— 否则俯视看下去就是「一张脸加个领子」
+const BODY_W = 10.5;  // 前后（朝前方向）
+const BODY_H = 13;    // 左右（肩宽）
+
+function drawPerson(x, y, dx, dy, art, opt){
+  opt = opt || {};
+  const ang   = Math.atan2(dy, dx) || 0;
+  const bob   = opt.bob || 0;                 // 走路上下起伏
+  const sway  = opt.sway || 0;                // 走路左右微摆
+  const lean  = opt.lean || 0;                // 跑起来前倾
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(opt.scale || 1, opt.scale || 1);   // 游戏里放大一点，手机屏幕上才认得出来
+
+  // 影子（随起伏变小，做出「抬脚」的感觉）
+  ctx.fillStyle = 'rgba(44,44,42,.16)';
+  ctx.beginPath();
+  ctx.ellipse(1.5, 6, 14 - Math.abs(bob)*0.9, 9.5 - Math.abs(bob)*0.6, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.translate(0, bob);
+  ctx.rotate(ang + sway);
+
+  // ---------- 背包（贴在背后 = 本地 -x）----------
+  if(opt.item === 'backpack'){
+    ctx.fillStyle = '#1E4468';
+    ctx.strokeStyle = '#8FC7EE'; ctx.lineWidth = 1.1;
+    roundRect(-19, -9, 14, 18, 5); ctx.fill(); ctx.stroke();
+    // 翻盖
+    ctx.fillStyle = '#12314E';
+    roundRect(-19, -9, 14, 6, 5); ctx.fill();
+    // 两条反光条：一眼认出是「背包」而不是一个方块
+    ctx.fillStyle = '#8FC7EE';
+    roundRect(-19, -1.0, 14, 2.0, 0.8); ctx.fill();
+    ctx.fillStyle = 'rgba(143,199,238,.55)';
+    roundRect(-19, 3.4, 14, 1.6, 0.8); ctx.fill();
+    // 侧袋
+    ctx.fillStyle = '#173752';
+    roundRect(-15, -12, 7, 3.2, 1.3); ctx.fill();
+    roundRect(-15,  8.8, 7, 3.2, 1.3); ctx.fill();
+    // 卡扣
+    ctx.fillStyle = '#CFE7F8';
+    roundRect(-6.6, -1.6, 3.0, 3.2, 1.1); ctx.fill();
+    // 两条背带跨过肩膀
+    ctx.strokeStyle = '#8FC7EE'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-6.5, -8); ctx.lineTo(4, -11.5);
+    ctx.moveTo(-6.5,  8); ctx.lineTo(4,  11.5);
+    ctx.stroke();
+  }
+
+  // ---------- 躯干（肩）----------
+  // 深色底 + 亮色面。亮面往前挪，只在后背留下一道月牙阴影 ——
+  // 如果亮面四周都缩一圈，就会变成一圈「甜甜圈」把头顶围住。
+  ctx.fillStyle = art.dark;
+  ctx.beginPath(); ctx.ellipse(lean, 0, BODY_W, BODY_H, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = art.body;
+  ctx.beginPath(); ctx.ellipse(lean + 2.0, 0, BODY_W - 2.0, BODY_H - 0.4, 0, 0, Math.PI*2); ctx.fill();
+  // 描边：让小人从浅色地板上跳出来
+  ctx.strokeStyle = 'rgba(44,44,42,.24)'; ctx.lineWidth = 0.9;
+  ctx.beginPath(); ctx.ellipse(lean, 0, BODY_W, BODY_H, 0, 0, Math.PI*2); ctx.stroke();
+
+  // 领导：只加一条很窄的领带，从下巴底下露一角（俯视角看不到衬衫，加多了就是一坨白）
+  if(art.suit){
+    ctx.fillStyle = '#8E1F1F';
+    roundRect(lean + 5.2, -1.2, 4.0, 2.4, 1); ctx.fill();
+  }
+
+  // ---------- 头 ----------
+  // 俯视角看到的是「头顶」：大半是头发，脸只在前缘露出一弯。
+  // 之前画成「一个圆脸 + 一圈头发」，那是正面视角，所以看着像靶心。
+  ctx.save();
+  ctx.translate(lean + 2.2, 0);
+
+  // 脸：整圆先铺底
+  ctx.fillStyle = art.skin;
+  ctx.beginPath(); ctx.arc(0.6, 0, 7.0, 0, Math.PI*2); ctx.fill();
+
+  // 头发：盖住后 220°，前面那条弦就是发际线
+  ctx.fillStyle = art.hair;
+  ctx.beginPath();
+  ctx.arc(0.6, 0, 7.4, Math.PI*0.34, Math.PI*1.66);
+  ctx.closePath(); ctx.fill();
+
+  // 头发高光，让「头发」这个材质被认出来
+  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0.6, 0, 4.9, Math.PI*0.78, Math.PI*1.22); ctx.stroke();
+
+  // 鼻尖：朝向指示，压在发际线前方
+  ctx.fillStyle = SKIN_D;
+  ctx.beginPath(); ctx.arc(6.9, 0, 1.4, 0, Math.PI*2); ctx.fill();
+
+  // 描边：后脑和后脸分别描，合成一个完整轮廓
+  ctx.strokeStyle = 'rgba(44,44,42,.34)'; ctx.lineWidth = 0.9;
+  ctx.beginPath(); ctx.arc(0.6, 0, 7.4, Math.PI*0.34, Math.PI*1.66); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0.6, 0, 7.0, Math.PI*1.66, Math.PI*2.34); ctx.stroke();
+  ctx.restore();
+
+  // ---------- 手里的东西 ----------
+  // 画在头之后：俯视角下头本来会盖住身前的东西，
+  // 但这是小尺寸精灵，被盖住就完全认不出来了，所以让道具压在头上层。
+  drawHeldItem(opt.item, ang);
+
+  ctx.restore();
+}
+
+// 手里的道具：文件 / 笔记本电脑 / 咖啡
+function drawHeldItem(item, ang){
+  if(!item || item === 'backpack') return;
+  ctx.save();
+
+  // 先画手：让道具看起来是「被捏住」的，而不是贴在旁边
+  const hand = (hx, hy, hr) => {
+    ctx.fillStyle = SKIN;
+    ctx.strokeStyle = 'rgba(44,44,42,.20)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  };
+
+  if(item === 'paper'){
+    // 右手夹着一叠 A4 文件，斜插在身前
+    hand(6.5, 9.5, 3.2);
+    ctx.translate(8.5, 9.5);
+    ctx.rotate(-0.5);
+    // 下面几张，做出「一叠」的厚度
+    ctx.fillStyle = '#E3E0D4';
+    roundRect(-5, -7, 10, 17, 1.8); ctx.fill();
+    ctx.fillStyle = '#F4F2EA';
+    roundRect(-5, -9.5, 10, 17, 1.8); ctx.fill();
+    // 最上面那张
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#B4B0A2'; ctx.lineWidth = 1;
+    roundRect(-5, -12, 10, 17, 1.8); ctx.fill(); ctx.stroke();
+    // 红色抬头 + 条款线：一眼认出是「文件」而不是一张白纸
+    ctx.fillStyle = '#C0392B';
+    roundRect(-3, -10.4, 6, 2.5, 0.9); ctx.fill();
+    ctx.strokeStyle = '#C9C6BB'; ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-2.6, -5.6); ctx.lineTo(3.4, -5.6);
+    ctx.moveTo(-2.6, -2.2); ctx.lineTo(3.4, -2.2);
+    ctx.moveTo(-2.6,  1.2); ctx.lineTo(1.2,  1.2);
+    ctx.stroke();
+  }
+
+  else if(item === 'laptop'){
+    // 双手抱着笔记本，边走边盯屏幕
+    hand(6.6, -9.6, 3.2);
+    hand(6.6,  9.6, 3.2);
+    ctx.fillStyle = '#2A2F36';
+    roundRect(7, -10.5, 12.5, 21, 2.4); ctx.fill();
+    ctx.fillStyle = '#454D57';
+    roundRect(7, -10.5, 12.5, 3.2, 2.4); ctx.fill();          // 转轴那一边
+    // 屏幕（朝着人这一面，所以是亮的）
+    ctx.fillStyle = '#6FA8DC';
+    roundRect(9.2, -6.6, 9.2, 17, 1.6); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.40)';
+    roundRect(10.2, -5.4, 2.8, 14.6, 1.2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.82)';
+    roundRect(14.2, -4.6, 3.4, 2.4, 0.7); ctx.fill();
+    roundRect(14.2, -1.2, 3.4, 2.4, 0.7); ctx.fill();
+    roundRect(10.4,  2.6, 7.0, 6.0, 1.2); ctx.fill();
+  }
+
+  else if(item === 'coffee'){
+    // 一只手端着纸杯咖啡
+    // 用略偏 3/4 的画法：纯正俯视画成两个同心圆，看起来会像靶心而不是杯子
+    hand(9.6, 9, 3.4);
+    ctx.save();
+    ctx.translate(13.2, 8.6);
+    ctx.fillStyle = '#F2EFE6';                       // 杯身
+    roundRect(-4.3, -2.5, 8.6, 7.2, 2.2); ctx.fill();
+    ctx.strokeStyle = '#B4B0A2'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.fillStyle = '#C9924F';                       // 杯套（防烫那圈）
+    roundRect(-4.3, 0.4, 8.6, 3.4, 0.8); ctx.fill();
+    ctx.fillStyle = '#5E4126';                       // 杯盖
+    ctx.beginPath(); ctx.ellipse(0, -2.4, 4.5, 2.6, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#7A5533';                       // 盖面
+    ctx.beginPath(); ctx.ellipse(-0.5, -2.7, 3.2, 1.7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#2E1E10';                       // 饮用口
+    ctx.beginPath(); ctx.ellipse(2.4, -3.0, 1.1, 0.75, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    // 热气
+    ctx.strokeStyle = 'rgba(168,166,156,.92)';
+    ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(15.6, 3.4);
+    ctx.bezierCurveTo(19.6, 1.6, 14.6, -1.4, 18.6, -3.4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(17.3, 8.8);
+    ctx.bezierCurveTo(21.3, 7.0, 16.3, 4.0, 20.3, 2.0);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function draw(){
+  ctx.save();
+  ctx.clearRect(0,0,W,H);
+
+  if(shake > 0){
+    ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  }
+
+  /* 地面 / 墙 */
+  ctx.fillStyle = C.wall;
+  ctx.fillRect(0,0,W,H);
+
+  for(const r of ROOMS){
+    ctx.fillStyle = (r.id==='corridor') ? C.floorAlt : C.floor;
+    roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+  }
+  for(const d of DOORS){
+    ctx.fillStyle = C.floor;
+    ctx.fillRect(d.x, d.y, d.w, d.h);
+  }
+
+  /* 房间名 */
+  ctx.font = '500 15px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = '#BDB9AA';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  for(const r of ROOMS){
+    ctx.fillText(r.name, r.x + 16, r.y + 14);
+  }
+
+  /* 视野锥（按房间裁剪，墙外不显示） */
+  for(const n of npcs){
+    const room = ROOMS.find(r=> r.id === n.room);
+    if(!room) continue;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
+
+    const a = Math.atan2(n.dir.y, n.dir.x);
+    const half = (n.fov/2) * Math.PI/180;
+    const danger = n.alert > 0.02;
+    const g = ctx.createRadialGradient(n.x, n.y, 8, n.x, n.y, n.vision);
+    const base = (n.kind==='boss') ? '226,75,74' : '239,159,39';
+    const alpha = 0.30 + n.alert*0.34;
+    g.addColorStop(0,   'rgba('+base+','+(alpha*0.95)+')');
+    g.addColorStop(0.55,'rgba('+base+','+(alpha*0.55)+')');
+    g.addColorStop(1,   'rgba('+base+',0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(n.x, n.y);
+    ctx.arc(n.x, n.y, n.vision, a-half, a+half);
+    ctx.closePath();
+    ctx.fill();
+
+    // 锥体边缘描线，让边界"看得见"，避免玩家觉得判定模糊
+    ctx.strokeStyle = danger ? 'rgba('+base+',0.85)' : 'rgba('+base+',0.42)';
+    ctx.lineWidth = danger ? 1.6 : 1;
+    ctx.beginPath();
+    ctx.moveTo(n.x, n.y);
+    ctx.lineTo(n.x + Math.cos(a-half)*n.vision, n.y + Math.sin(a-half)*n.vision);
+    ctx.moveTo(n.x, n.y);
+    ctx.lineTo(n.x + Math.cos(a+half)*n.vision, n.y + Math.sin(a+half)*n.vision);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* 家具 */
+  for(const c of COVERS){
+    ctx.fillStyle = C.cover;
+    roundRect(c.x, c.y, c.w, c.h, 6); ctx.fill();
+    ctx.strokeStyle = C.coverLine; ctx.lineWidth = 1; ctx.stroke();
+
+    if(c.t==='desk' || c.t==='sofa'){
+      ctx.strokeStyle = 'rgba(185,181,166,.85)';
+      ctx.beginPath();
+      for(let i=1;i<3;i++){
+        const yy = c.y + c.h*i/3;
+        ctx.moveTo(c.x+8, yy); ctx.lineTo(c.x+c.w-8, yy);
+      }
+      ctx.stroke();
+    }
+    if(c.t==='plant'){
+      ctx.fillStyle = 'rgba(59,109,17,.20)';
+      ctx.beginPath();
+      ctx.arc(c.x+c.w/2, c.y+c.h/2, 13, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  /* 打卡机 */
+  ctx.fillStyle = C.machine;
+  roundRect(MACHINE.x, MACHINE.y, MACHINE.w, MACHINE.h, 7); ctx.fill();
+  ctx.fillStyle = '#8FE3B8';
+  ctx.fillRect(MACHINE.x+43, MACHINE.y+11, 8, 6);
+  ctx.font = '500 13px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = C.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('打卡机', MACHINE.x + MACHINE.w/2, MACHINE.y + MACHINE.h + 8);
+
+  // 到达提示环
+  ctx.strokeStyle = 'rgba(59,109,17,.28)';
+  ctx.lineWidth = 1.2; ctx.setLineDash([5,5]);
+  ctx.beginPath(); ctx.ellipse(WIN_ZONE.x, WIN_ZONE.y, WIN_ZONE.rx, WIN_ZONE.ry, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  /* NPC */
+  for(const n of npcs){
+    const isBoss = n.kind==='boss';
+    const col = isBoss ? C.boss : C.mate;
+
+    // 警觉条
+    if(n.alert > 0.01){
+      const bw = 42, bh = 6, bx = n.x-bw/2, by = n.y-40;
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      roundRect(bx-1.5, by-1.5, bw+3, bh+3, 4); ctx.fill();
+      ctx.fillStyle = n.alert > 0.66 ? C.boss : (n.alert > 0.33 ? C.mate : C.good);
+      roundRect(bx, by, bw*n.alert, bh, 3); ctx.fill();
+    }
+    // 头顶符号
+    if(n.alert > 0.06){
+      ctx.font = '500 22px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillStyle = n.alert > 0.66 ? C.boss : C.mate;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(n.alert > 0.5 ? '!' : '?', n.x, n.y-44);
+    }
+
+    // 站位底光：让小人从地板上跳出来
+    ctx.fillStyle = isBoss ? 'rgba(226,75,74,.22)' : 'rgba(239,159,39,.24)';
+    ctx.beginPath(); ctx.arc(n.x, n.y, 19, 0, Math.PI*2); ctx.fill();
+
+    // 小人：同事夹着文件 / 抱着电脑，领导端着咖啡
+    drawPerson(n.x, n.y, n.dir.x, n.dir.y, isBoss ? ART.boss : ART.mate, {
+      item: n.item,
+      scale: 1.18,
+      bob:  Math.sin(n.phase || 0) * 1.6,
+      sway: Math.cos((n.phase || 0) * 0.5) * 0.045
+    });
+
+    // 名字
+    ctx.font = '400 12.5px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(isBoss ? '领导' : '同事', n.x, n.y + 27);
+  }
+
+  /* 玩家 */
+  // 跑步噪音圈
+  if(player.running){
+    ctx.strokeStyle = 'rgba(24,95,165,.30)';
+    ctx.lineWidth = 1.4; ctx.setLineDash([4,6]);
+    ctx.beginPath(); ctx.arc(player.x, player.y, P.noiseR*0.5, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // 自己的高亮圈
+  ctx.fillStyle = 'rgba(24,95,165,.16)';
+  ctx.beginPath(); ctx.arc(player.x, player.y, 19, 0, Math.PI*2); ctx.fill();
+
+  // 背包下班的小人
+  drawPerson(player.x, player.y, player.dir.x, player.dir.y, ART.player, {
+    item: 'backpack',
+    scale: 1.18,
+    bob:  Math.sin(player.phase || 0) * (player.running ? 2.4 : 1.6),
+    sway: Math.cos((player.phase || 0) * 0.5) * (player.running ? 0.085 : 0.045),
+    lean: player.running ? 1.8 : 0.6
+  });
+
+  ctx.restore();
+
+  /* 屏幕边缘警示 */
+  if(flashVignette > 0.01){
+    const g2 = ctx.createRadialGradient(W/2,H/2, H*0.32, W/2,H/2, H*0.66);
+    g2.addColorStop(0,'rgba(226,75,74,0)');
+    g2.addColorStop(1,'rgba(226,75,74,'+(0.30*flashVignette)+')');
+    ctx.fillStyle = g2; ctx.fillRect(0,0,W,H);
+  }
+
+  /* ---------- HUD ---------- */
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  // 倒计时
+  const urgent = timeLeft <= 15;
+  ctx.fillStyle = 'rgba(255,255,255,.90)';
+  roundRect(W/2-92, 12, 184, 62, 14); ctx.fill();
+  ctx.font = '500 34px ui-monospace,SFMono-Regular,Menlo,monospace';
+  ctx.fillStyle = urgent ? C.boss : C.text;
+  ctx.fillText(timeLeft.toFixed(1), W/2, 40);
+  ctx.font = '400 12px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = C.muted;
+  ctx.fillText('距下班还有（秒）', W/2, 63);
+
+  // 局数
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,.90)';
+  roundRect(20, 12, 116, 34, 10); ctx.fill();
+  ctx.font = '500 14px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = C.text;
+  ctx.fillText('第 ' + round + ' 局 · 限 ' + roundTime + 's', 32, 30);
+
+  // 当前区域
+  const curRoom = roomOf(player.x, player.y);
+  const curName = curRoom ? (ROOMS.find(r=>r.id===curRoom)||{}).name : '';
+  ctx.fillStyle = 'rgba(255,255,255,.90)';
+  roundRect(20, 54, 116, 30, 10); ctx.fill();
+  ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = C.muted;
+  ctx.fillText('位置：' + curName, 32, 69);
+
+  // 摇杆
+  if(joy.active){
+    ctx.strokeStyle = 'rgba(44,44,42,.20)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 62, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.42)';
+    ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 62, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(44,44,42,.55)';
+    ctx.beginPath();
+    ctx.arc(joy.ox + joy.dx*joy.mag*62, joy.oy + joy.dy*joy.mag*62, 27, 0, Math.PI*2);
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = 'rgba(44,44,42,.16)'; ctx.lineWidth = 1.5; ctx.setLineDash([4,6]);
+    ctx.beginPath(); ctx.arc(150, 1130, 62, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '400 12.5px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = 'rgba(44,44,42,.34)'; ctx.textAlign='center';
+    ctx.fillText('左半屏拖动', 150, 1130);
+  }
+
+  // 跑按钮
+  ctx.beginPath(); ctx.arc(628, 1150, 62, 0, Math.PI*2);
+  ctx.fillStyle = runBtn.active ? 'rgba(24,95,165,.90)' : 'rgba(255,255,255,.42)';
+  ctx.fill();
+  ctx.strokeStyle = runBtn.active ? 'rgba(24,95,165,1)' : 'rgba(44,44,42,.22)';
+  ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.font = '500 16px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = runBtn.active ? '#FFFFFF' : 'rgba(44,44,42,.62)';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('跑', 628, 1150);
+}
+
+/* ============================================================
+   输入
+   ============================================================ */
+const joy = { active:false, id:null, ox:0, oy:0, dx:0, dy:1, mag:0 };
+const runBtn = { active:false, id:null };
+const keysDown = new Set();
+
+function toLogical(clientX, clientY){
+  const r = cv.getBoundingClientRect();
+  return {
+    x: (clientX - r.left) / r.width  * W,
+    y: (clientY - r.top ) / r.height * H
+  };
+}
+function inRunBtn(p){ return Math.hypot(p.x-628, p.y-1150) < 74; }
+
+cv.addEventListener('pointerdown', e=>{
+  if(state !== 'playing') return;
+  cv.setPointerCapture(e.pointerId);
+  const p = toLogical(e.clientX, e.clientY);
+  if(inRunBtn(p)){ runBtn.active = true; runBtn.id = e.pointerId; return; }
+  if(joy.id === null){
+    joy.active = true; joy.id = e.pointerId;
+    joy.ox = p.x; joy.oy = p.y; joy.dx = 0; joy.dy = 1; joy.mag = 0;
+  }
+});
+
+cv.addEventListener('pointermove', e=>{
+  if(state !== 'playing') return;
+  if(e.pointerId !== joy.id) return;
+  const p = toLogical(e.clientX, e.clientY);
+  let dx = p.x - joy.ox, dy = p.y - joy.oy;
+  const d = Math.hypot(dx,dy);
+  const maxR = 62;
+  if(d < 1){ joy.mag = 0; return; }
+  joy.dx = dx/d; joy.dy = dy/d;
+  joy.mag = clamp(d/maxR, 0, 1);
+  // 摇杆拖太远时，原点跟着走，避免手滑出屏幕
+  if(d > maxR*1.6){
+    joy.ox = p.x - joy.dx*maxR*1.1;
+    joy.oy = p.y - joy.dy*maxR*1.1;
+  }
+});
+
+function endPointer(e){
+  if(e.pointerId === joy.id){ joy.active=false; joy.id=null; joy.mag=0; }
+  if(e.pointerId === runBtn.id){ runBtn.active=false; runBtn.id=null; }
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+cv.addEventListener('pointerleave', endPointer);
+
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  keysDown.add(k);
+  if(k === 'r' && state !== 'menu'){ startRun(); }
+  if(k === ' ' && state === 'menu'){ startRun(); }
+  if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+});
+window.addEventListener('keyup', e=> keysDown.delete(e.key.toLowerCase()));
+window.addEventListener('blur', ()=>{ keysDown.clear(); joy.active=false; runBtn.active=false; });
+
+/* ============================================================
+   流程
+   ============================================================ */
+function startRun(){
+  resetRun();
+  show(null);
+  state = 'playing';
+  last = performance.now();
+}
+document.getElementById('btnStart').onclick      = ()=>{ round = 1; roundTime = ROUND_TIME;       startRun(); };
+document.getElementById('btnStartTight').onclick = ()=>{ round = 1; roundTime = ROUND_TIME_TIGHT; startRun(); };
+document.getElementById('btnRetry').onclick  = ()=>{ round++; startRun(); };
+document.getElementById('btnRetry2').onclick = ()=>{ round++; startRun(); };
+document.getElementById('btnReset').onclick  = ()=>{ round = 1; startRun(); };
+document.getElementById('btnReset2').onclick = ()=>{ round = 1; startRun(); };
+
+/* ============================================================
+   主循环
+   ============================================================ */
+function loop(t){
+  // dt 必须夹在 [0, 0.05]：rAF 时间戳可能早于 performance.now()（切标签页/掉帧时），
+  // 负的 dt 会让 NPC 倒着走、倒计时反而变大。
+  const dt = Math.max(0, Math.min((t - last)/1000, 0.05));
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resize();
+buildRound();
+show('ovStart');
+requestAnimationFrame(t=>{ last = t; loop(t); });
+</script>
+</body>
+</html>

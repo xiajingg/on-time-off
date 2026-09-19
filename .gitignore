@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+._*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 依赖 / 构建产物（本项目没有构建步骤，留着防以后加）
+node_modules/
+dist/
+build/
+
+# 日志
+*.log
