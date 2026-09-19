@@ -1653,7 +1653,7 @@ function draw(){
      原来的待机状态只有一个淡淡的虚线圆 + 12px 灰字，不少人看不出这里能拖。
      现在画成实体：底盘 + 十字箭头 + 摇杆头 + 呼吸提示 + 带描边的文字标签。 */
   if(state === 'playing'){
-    const jx = 150, jy = 1112, jr = 64;
+    const jx = 360, jy = 1112, jr = 62;   // 挪到屏幕水平中间
     const cx = joy.active ? joy.ox : jx;
     const cy = joy.active ? joy.oy : jy;
     const kx = joy.active ? joy.ox + joy.dx*joy.mag*jr : jx;
@@ -1681,7 +1681,7 @@ function draw(){
     }
     // 摇杆头
     ctx.fillStyle = joy.active ? 'rgba(44,44,42,.58)' : 'rgba(44,44,42,.46)';
-    ctx.beginPath(); ctx.arc(kx, ky, 29, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(kx, ky, 27, 0, Math.PI*2); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.80)'; ctx.lineWidth = 1.8; ctx.stroke();
     // 文字标签（描边，压在楼面上也读得清）
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1692,31 +1692,33 @@ function draw(){
     ctx.fillText('拖动移动', jx, jy + jr + 26);
   }
 
-  /* ---------- 跑按钮（红色）----------
-     原来是白底灰字，跟背景一个色，看不出是个按钮。 */
+  /* ---------- 跑按钮（红色矩形）----------
+     原来是圆形，偏大；改成小一号的圆角矩形，和摇杆排在同一行。 */
   if(state === 'playing'){
-    const rx = 614, ry = 1112, rr = 68;
+    const rx0 = 474, ry0 = 1082, rw = 132, rh = 60;
+    const rcx = rx0 + rw/2, rcy = ry0 + rh/2;
     if(runBtn.active){
       ctx.fillStyle = 'rgba(211,71,60,.30)';
-      ctx.beginPath(); ctx.arc(rx, ry, rr + 14, 0, Math.PI*2); ctx.fill();
+      roundRect(rx0-8, ry0-8, rw+16, rh+16, 22); ctx.fill();
     }
     ctx.fillStyle = runBtn.active ? '#A31D14' : '#D9433A';
-    ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 3.5; ctx.stroke();
+    roundRect(rx0, ry0, rw, rh, 16); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 3; ctx.stroke();
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = '500 28px -apple-system,"PingFang SC",sans-serif';
-    ctx.fillText('跑', rx, ry - 9);
-    ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
+    ctx.font = '500 25px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('跑', rcx, rcy - 8);
+    ctx.font = '400 12px -apple-system,"PingFang SC",sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,.88)';
-    ctx.fillText('按住', rx, ry + 19);
+    ctx.fillText('按住', rcx, rcy + 16);
     // 标签
     ctx.font = '500 16px -apple-system,"PingFang SC",sans-serif';
     ctx.strokeStyle = 'rgba(0,0,0,.38)'; ctx.lineWidth = 4;
-    ctx.strokeText('按住加速', rx, ry + rr + 26);
+    ctx.strokeText('按住加速', rcx, ry0 + rh + 24);
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('按住加速', rx, ry + rr + 26);
+    ctx.fillText('按住加速', rcx, ry0 + rh + 24);
   }
+
 }
 
 /* ============================================================
@@ -1733,7 +1735,7 @@ function toLogical(clientX, clientY){
     y: (clientY - r.top ) / r.height * H
   };
 }
-function inRunBtn(p){ return Math.hypot(p.x-614, p.y-1112) < 80; }   // 跟着红色按钮的位置走
+function inRunBtn(p){ return p.x >= 466 && p.x <= 614 && p.y >= 1074 && p.y <= 1150; }   // 矩形命中区
 
 cv.addEventListener('pointerdown', e=>{
   // 「掀桌子」场景：点屏幕任何地方都算动手（手机上不用瞄准）
