@@ -189,100 +189,115 @@ const C = {
 };
 
 /* ---------- 关卡几何 ---------- */
-// 不是「房间 + 走廊」，而是【一整块开放地板 + 一条条圆头墙体】—— 迷宫那种做法。
-// 好处：墙是有机的一段段，墙头是圆的，走向可以带弧度；玩家在开放空间里绕墙走，
-// 而不是被关在一格一格里。
+// 骨架：椭圆环道办公楼。走廊是【圆弧】，房间挂在弧道外侧。
 //
-// 复杂度控制：六道主墙交替从左右伸出，形成一条 S 形的通路（六次换边），
-// 其中两处留了额外的缺口 —— 所以有分岔，但不会绕晕。
+//            电梯厅（打卡机）
+//        ╭──── 环形走廊 ────╮
+//     档案室   ╭─ 中庭 ─╮   打印间
+//        ╰──────╯      ╰──────╯
+//     会议室                茶水间
+//        ╰─── 开放办公区（出生点）───╯
 //
-//   ┌────────────────────────────────────────┐  打卡机
-//   │                                        │  ← 电梯厅
-//   │            ╭──────────────────╮        │
-//   │  ╭─────────╯                  ╰─────── │   ← 老周这一段
-//   │  │                    ╭──────────────╮ │
-//   │  ╰────────────────────╯              │ │
-//   │        ╭─────────────────────╮        │
-//   │  ╰─────╯                     ╰─────── │
-//   │  ╭──────────────╮    ╭──────╮         │
-//   │  │              ╰────╯      │         │
-//   │  ╰──────────────────────────╯         │
-//   │              ╭───────────────╮        │
-//   │  ╰───────────╯               ╰─────── │
-//   │         工位区（你在这里）              │
-//   └────────────────────────────────────────┘
-const BOUND = { x:40, y:40, w:640, h:1200 };   // 外墙范围
-const WALL_T = 22;                              // 墙厚（墙头是圆的）
+// 为什么用弧：视野是「正前方一条直线」，两面直墙之间视线一穿到底；
+// 弧墙让视线在切点处自然断掉，帖着内圈走最安全。
+//
+// 所有区域都定义在【归一化极坐标】里（rr = 相对半轴的半径，aa = 角度），
+// 同一份数据既能算椭圆环带，也能算楔形房间。
+const BLD = { cx:360, cy:640, rx:300, ry:430 };
+const D2R = Math.PI/180;
 
-// 每一道墙是一条折线。两端圆头由描边的 round cap 得到，
-// 中途给一点小偏移就变成带弧度的墙。
-const WALLS = [
-  // 从左边墙伸出
-  [[40,1070],[200,1062],[370,1072]],
-  [[40, 770],[150,764],[240,772]],
-  [[330, 768],[380,770]],
-  [[40, 470],[200,464],[360,472]],
-  // 从右边墙伸出
-  [[680, 920],[500,914],[310,922]],
-  [[680, 620],[480,614],[320,622]],
-  [[680, 320],[560,314],[430,322]],
-  [[370, 318],[320,320]],
-  // 独立的一小段，给开放区当掩体
-  [[150, 960],[270,955]],
-  [[520, 500],[600,510]]
+function polar(rr, aa){ return [ BLD.cx + rr*BLD.rx*Math.cos(aa), BLD.cy + rr*BLD.ry*Math.sin(aa) ]; }
+function toPolar(x,y){
+  const u = (x-BLD.cx)/BLD.rx, v = (y-BLD.cy)/BLD.ry;
+  return { rr: Math.hypot(u,v), aa: Math.atan2(v,u) };
+}
+
+// 环形走廊：3/4 圆。正北那 1/4 被电梯厅占掉，
+// 所以环道只有两个断口 —— 正好就是电梯厅的两扇门。
+const RING = [ { r0:0.42, r1:0.68, a0:315, a1:585 } ];
+
+// 中庭：中央大会议室，东西各开一个门，可以抄近路穿过去
+const CORE = { r0:0, r1:0.34, id:'atrium', name:'中庭' };
+
+// 外圈房间（楔形）：每间一个门通向环道
+const ROOMS = [
+  { id:'print',  name:'打印间',     a0:318, a1:358, r0:0.76, r1:1.00, door:338 },
+  { id:'pantry', name:'茶水间',     a0:  3, a1: 43, r0:0.76, r1:1.00, door: 23 },
+  { id:'open',   name:'开放办公区',  a0: 48, a1:118, r0:0.76, r1:1.00, door: 83 },
+  { id:'meet',   name:'会议室',     a0:123, a1:178, r0:0.76, r1:1.00, door:150 },
+  { id:'arch',   name:'档案室',     a0:183, a1:222, r0:0.76, r1:1.00, door:202 }
 ];
 
-// 区域名（只用于 HUD 显示和台词里的「在哪儿」）
-const ZONES = [
-  { id:'lobby',  y0: 40, y1: 310, name:'电梯厅'    },
-  { id:'north',  y0: 310, y1: 470, name:'北区'      },
-  { id:'mid',    y0: 470, y1: 620, name:'会议区'    },
-  { id:'pantry', y0: 620, y1: 770, name:'茶水间'    },
-  { id:'arch',   y0: 770, y1: 920, name:'档案室'    },
-  { id:'open',   y0: 920, y1:1070, name:'开放办公区' },
-  { id:'desk',   y0:1070, y1:1240, name:'工位区'    }
-];
+// 电梯厅：正北的楔形，纵深从环道一直铺到外墙
+const WING = { a0:225, a1:315, r0:0.42, r1:1.00, id:'lobby', name:'电梯厅' };
 
-// 点到线段的距离
-function distSeg(px,py, x1,y1, x2,y2){
-  const dx=x2-x1, dy=y2-y1;
-  const L2=dx*dx+dy*dy;
-  let t = L2 ? ((px-x1)*dx + (py-y1)*dy)/L2 : 0;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px-(x1+dx*t), py-(y1+dy*t));
-}
-function distPoly(px,py, pts){
-  let m = 1e9;
-  for(let i=0;i<pts.length-1;i++){
-    const d = distSeg(px,py, pts[i][0],pts[i][1], pts[i+1][0],pts[i+1][1]);
-    if(d < m) m = d;
-  }
-  return m;
-}
-// 每道墙的包围盒，用来加速
-for(const w of WALLS){
-  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
-  for(const p of w){ if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0]; if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1]; }
-  w.bb = {x0:x0-30, y0:y0-30, x1:x1+30, y1:y1+30};
+// 门 = 把中间那圈墙挖开一段（房间↔环道、中庭↔环道、中庭↔电梯厅）
+const DOORS = [];
+// 门开在房间靠边处（不在正中）—— 正中留给区域名和家具
+const DOOR_OFF = 10;                    // 相对房间起始角的偏移
+for(const r of ROOMS) DOORS.push({ a:r.a0 + DOOR_OFF, half:9, r0:0.62, r1:0.82 });
+DOORS.push({ a:  0, half:9,  r0:0.30, r1:0.46 });   // 中庭 ↔ 环道（东）
+DOORS.push({ a:180, half:9,  r0:0.30, r1:0.46 });   // 中庭 ↔ 环道（西）
+DOORS.push({ a:270, half:11, r0:0.30, r1:0.50 });   // 中庭 ↔ 电梯厅（正北）
+
+// 落在「环带 + 角度扇区」里吗（a0..a1 允许跨过 0，例如 315→585）
+function inSector(x,y, r0,r1, a0,a1){
+  const p = toPolar(x,y);
+  if(p.rr < r0 || p.rr > r1) return false;
+  let deg = p.aa/D2R; if(deg < 0) deg += 360;
+  let a = a0; while(a > 360) a -= 360;
+  const d = ((deg - a) % 360 + 360) % 360;
+  return d <= (a1 - a0);
 }
 
-// 地板 = 外墙以内 且 不在任何一道墙里
+// 地板 = 中庭 ∪ 环形走廊 ∪ 电梯厅 ∪ 五个房间 ∪ 门
 function inFloor(x,y){
-  if(x < BOUND.x || x > BOUND.x+BOUND.w || y < BOUND.y || y > BOUND.y+BOUND.h) return false;
-  for(const w of WALLS){
-    const bb = w.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
-    if(distPoly(x,y,w) <= WALL_T/2) return false;
+  if(inSector(x,y, CORE.r0, CORE.r1, -180, 180)) return true;
+  for(const g of RING) if(inSector(x,y, g.r0, g.r1, g.a0, g.a1)) return true;
+  if(inSector(x,y, WING.r0, WING.r1, WING.a0, WING.a1)) return true;
+  for(const r of ROOMS) if(inSector(x,y, r.r0, r.r1, r.a0, r.a1)) return true;
+  for(const d of DOORS) if(inSector(x,y, d.r0, d.r1, d.a-d.half, d.a+d.half)) return true;
+  return false;
+}
+
+// 玩家站在 (x,y) 时整个身位是否都在地板上（八个方向采样）
+// —— 比算「离墙多远」稳，因为它对任意形状的地板都成立
+function discOnFloor(x,y,r){
+  if(!inFloor(x,y) || onCover(x,y)) return false;
+  for(let i=0;i<8;i++){
+    const a = i*Math.PI/4;
+    const px = x + Math.cos(a)*r, py = y + Math.sin(a)*r;
+    if(!inFloor(px,py) || onCover(px,py)) return false;
   }
   return true;
 }
 
+// 区域归属（HUD 显示 + 台词里的「在哪儿」）
+function zoneAt(x,y){
+  for(const r of ROOMS) if(inSector(x,y, r.r0, r.r1, r.a0, r.a1)) return r.id;
+  if(inSector(x,y, WING.r0, WING.r1, WING.a0, WING.a1)) return WING.id;
+  if(inSector(x,y, CORE.r0, CORE.r1, -180, 180)) return CORE.id;
+  for(const g of RING) if(inSector(x,y, g.r0, g.r1, g.a0, g.a1)) return 'ring';
+  return null;
+}
+function zoneName(id){ return ZONE_NAMES[id] || '过道'; }
+const ZONE_NAMES = { ring:'环形走廊', atrium:'中庭', lobby:'电梯厅' };
+for(const r of ROOMS) ZONE_NAMES[r.id] = r.name;
+
 // 墙的位图（8px 一格）。视线射线步进查它，比每次算折线距离快很多
 const MASK_S = 8;
 const MASK_W = Math.ceil(W/MASK_S), MASK_H = Math.ceil(H/MASK_S);
-const FLOOR_MASK = new Uint8Array(MASK_W*MASK_H);
-function buildFloorMask(){
+const FLOOR_MASK  = new Uint8Array(MASK_W*MASK_H);   // 1 = 地板
+const OPAQUE_MASK = new Uint8Array(MASK_W*MASK_H);   // 1 = 挡视线（墙 + 家具）
+
+function buildMasks(){
   for(let gy=0;gy<MASK_H;gy++) for(let gx=0;gx<MASK_W;gx++){
-    FLOOR_MASK[gy*MASK_W+gx] = inFloor(gx*MASK_S+MASK_S/2, gy*MASK_S+MASK_S/2) ? 1 : 0;
+    const x = gx*MASK_S+MASK_S/2, y = gy*MASK_S+MASK_S/2;
+    const f = inFloor(x,y);
+    FLOOR_MASK[gy*MASK_W+gx] = f ? 1 : 0;
+    let op = !f;
+    if(!op && onCover(x,y)) op = true;
+    OPAQUE_MASK[gy*MASK_W+gx] = op ? 1 : 0;
   }
 }
 function isWall(x,y){
@@ -290,33 +305,52 @@ function isWall(x,y){
   if(gx<0||gy<0||gx>=MASK_W||gy>=MASK_H) return true;
   return FLOOR_MASK[gy*MASK_W+gx] === 0;
 }
+function isOpaque(x,y){
+  const gx = (x/MASK_S)|0, gy = (y/MASK_S)|0;
+  if(gx<0||gy<0||gx>=MASK_W||gy>=MASK_H) return true;
+  return OPAQUE_MASK[gy*MASK_W+gx] === 1;
+}
 
 // 家具（同时挡视线、挡走位）。位置都躲开了门口，避免一进房间就被卡住
+/* ---------- 家具 ----------
+   家具也按【极坐标】定义：rr 是径向位置，aa 是角度，aw 是角度宽（度），rw 是径向厚。
+   为什么不用矩形：房间是楔形的 —— 矩形桌子放在东西两侧会戳穿弧墙。
+   扇形家具永远贴合房间，观感也更像弧形办公楼。
+   加载时顺手算出包围盒 x/y/w/h，给椅子和桌面小物件定位用。 */
 const COVERS = [
-  // 工位区（最下面那条带）
-  { x: 60, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板', chair:{side:'s', n:3} },
-  { x:440, y:1120, w:220, h: 52, t:'desk',    label:'工位隔板', chair:{side:'s', n:3} },
-  // 开放办公区
-  { x:420, y: 960, w:180, h: 55, t:'desk',    label:'工位',   chair:{side:'n', n:2} },
-  // 档案室
-  { x: 80, y: 660, w:180, h: 55, t:'desk',    label:'工位',   chair:{side:'s', n:2} },
-  // 会议区
-  { x:250, y: 520, w:180, h: 55, t:'desk',    label:'会议桌', chair:{side:'s', n:2} },
-  // 北区
-  { x:420, y: 380, w:180, h: 55, t:'desk',    label:'工位',   chair:{side:'s', n:2} },
-  // 电梯厅
-  { x: 80, y: 180, w:140, h: 55, t:'counter', label:'前台'   },
-  { x:500, y: 180, w:140, h: 55, t:'sofa',    label:'休息区' }
+  { rr:0.945, aa: 92, aw:20, rw:0.11, t:'desk',    label:'工位',   chair:{side:'n', n:2} },
+  { rr:0.945, aa:150, aw:20, rw:0.11, t:'desk',    label:'会议桌', chair:{side:'n', n:2} },
+  { rr:0.945, aa:202, aw:14, rw:0.11, t:'desk',    label:'文件柜', chair:{side:'e', n:1} },
+  { rr:0.945, aa: 23, aw:14, rw:0.11, t:'counter', label:'咖啡机', chair:{side:'w', n:1} },
+  { rr:0.945, aa:338, aw:14, rw:0.11, t:'desk',    label:'打印机', chair:{side:'w', n:1} }
 ];
+for(const c of COVERS){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(let k=0;k<=12;k++){
+    const aa = c.aa - c.aw/2 + c.aw*(k/12);
+    for(const rr of [c.rr-c.rw/2, c.rr+c.rw/2]){
+      const p = polar(rr, aa*D2R);
+      if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0];
+      if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1];
+    }
+  }
+  c.x=x0; c.y=y0; c.w=x1-x0; c.h=y1-y0;
+}
+// 家具是否压住这一点（扇形判定，不是包围盒）
+function inCover(x,y,c){
+  return inSector(x,y, c.rr-c.rw/2, c.rr+c.rw/2, c.aa-c.aw/2, c.aa+c.aw/2);
+}
+function onCover(x,y){
+  for(const c of COVERS) if(inCover(x,y,c)) return true;
+  return false;
+}
 
 /* ---------- 圆形承重柱 ----------
    视野是「正前方一条直线」之后，直角墙只能做到「全挡」或「全不挡」——
    切不出渐进的阴影。圆形的柱子才能让一条直线光束在它后面留出一块锥形盲区。
    另外真实办公楼本来就有承重柱，摆在这儿也不违和。
    柱子同时挡走位、挡视线。 */
-const PILLARS = [
-  { x:250, y:150, r:22 }, { x:470, y:150, r:22 }   // 电梯厅两根
-];
+const PILLARS = [];   // 已废弃：改用真实可见域遮挡后，不再需要「拿柱子冒充墙」
 
 // 注意：走廊（98px 宽）里【不能】放柱子 —— 柱子吃掉约 60px，同事的光束又占 50px，
 // 两条叠起来几乎把路堵死（实测机器人会在走廊卡 20 秒）。圆形的遮蔽物只放在 400px 宽的房间里。
@@ -336,10 +370,10 @@ function segCircle(x1,y1,x2,y2,c){
 
 // 打卡机
 const MACHINE = { x:300, y:40, w:120, h:58 };   // 放大，好把「下班打卡」四个字写上去
-const WIN_ZONE = { x:360, y: 96, rx:64, ry:52 };
+const WIN_ZONE = { x:360, y:270.2, rx:60, ry:46 };   // 打卡机：电梯厅正北
 
 // 出生点：工位区最里面
-const SPAWN = { x:360, y:1210 };
+const SPAWN = { x:492, y:967.7 };   // 你的工位所在的开放办公区
 
 /* ---------- 玩家参数 ---------- */
 const P = {
@@ -351,7 +385,9 @@ const P = {
 };
 
 const ROUND_TIME = 60;   // 单局秒数（原始设定：距离下班还有 1 分钟）
-const ROUND_TIME_TIGHT = 32; // 实测推荐值：最短路径 1220px ÷ 88px/s ≈ 14s，留 18s 等窗口
+const ROUND_TIME_TIGHT = 32; // 实测：椭圆环道最短路径 764px ÷ 88px/s ≈ 8.7s
+                             // ⚠️ 地图从「方格子」改成「椭圆环道」后路变短了，
+                             //    32s 现在偏宽松（余量 23s）。要不要压到 22s，等你拍。
 let roundTime = ROUND_TIME;  // 本局实际使用
 const INSET = 11;        // 贴墙留白
 
@@ -375,45 +411,45 @@ const ACT = {
 const rndRange = a => a[0] + Math.random()*(a[1]-a[0]);
 
 const NPC_DEFS = {
-  // 工位区（最下面那条带）
-  A: { key:'A', kind:'mate', name:'同事 · 老王', room:'desk', item:'paper',
+  // 开放办公区：你的同事，离出生点最近的一道坎
+  A: { key:'A', kind:'mate', name:'同事 · 老王', room:'open', item:'paper',
        speed:72, vision:250, fov:70, alertTime:1.5,
        stations:[
-         { x:170, y:1192, act:'sit',  face:[0,-1], noChair:true },
-         { x:550, y:1192, act:'sit',  face:[0,-1], noChair:true },
-         { x:360, y:1108, act:'chat', face:[0,1] }
+         { x:281.1, y:1010.1, act:'sit', face:[0.9,0.5] },
+         { x:446.2, y:979.4, act:'chat', face:[-1,0.2] },
+         { x:261.5, y:972.5, act:'chat', face:[0.8,0.6] }
        ] },
-  // 开放办公区
-  B: { key:'B', kind:'mate', name:'同事 · 小李', room:'open', item:'laptop',
+  // 环形走廊：沿弧巡逻，是「必须绕过去」的那道关
+  B: { key:'B', kind:'mate', name:'同事 · 小李', room:'ring', item:'laptop',
        speed:70, vision:290, fov:70, alertTime:1.5,
        stations:[
-         { x:140, y:1030, act:'chat', face:[1,0] },
-         { x:360, y:1030, act:'chat', face:[0,1] },
-         { x:580, y:1030, act:'sit',  face:[0,-1] }
+         { x:331.3, y:872.9, act:'chat', face:[-0.8,-0.6] },
+         { x:205, y:720.9, act:'chat', face:[-0.1,-1] },
+         { x:220.1, y:514.7, act:'chat', face:[0.6,-0.8] }
        ] },
-  // 档案室
-  C: { key:'C', kind:'boss', name:'领导 · 张总', room:'arch', item:'coffee',
+  // 会议室
+  C: { key:'C', kind:'boss', name:'领导 · 张总', room:'meet', item:'coffee',
        speed:62, vision:400, fov:80, alertTime:0.9,
        stations:[
-         { x:300, y: 690, act:'chat', face:[1,0] },
-         { x:600, y: 690, act:'sit',  face:[-1,0] },
-         { x:150, y: 740, act:'chat', face:[0,1] }
+         { x:204.9, y:924.6, act:'chat', face:[-0.7,-0.7] },
+         { x:94.1, y:707.2, act:'sit', face:[0.1,1] },
+         { x:115.5, y:727.4, act:'chat', face:[0,1] }
        ] },
-  // 北区：堵在最后一段
-  D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'north', item:'coffee',
+  // 电梯厅：守着打卡机，最后一道关
+  D: { key:'D', kind:'boss', name:'领导 · 陈总', room:'lobby', item:'coffee',
        speed:68, vision:340, fov:80, alertTime:0.9,
        stations:[
-         { x:150, y: 400, act:'chat', face:[1,0] },
-         { x:300, y: 400, act:'sit',  face:[0,1] },
-         { x:620, y: 345, act:'chat', face:[-1,0] }
+         { x:270.1, y:321, act:'chat', face:[0.9,-0.5] },
+         { x:449.9, y:321, act:'chat', face:[-0.9,-0.5] },
+         { x:360, y:373.4, act:'sit', face:[0,-1] }
        ] },
-  // 会议区
-  E: { key:'E', kind:'mate', name:'同事 · 老周', room:'mid', item:'paper',
+  // 茶水间
+  E: { key:'E', kind:'mate', name:'同事 · 老周', room:'pantry', item:'paper',
        speed:68, vision:250, fov:70, alertTime:1.5,
        stations:[
-         { x:150, y: 540, act:'chat', face:[1,0] },
-         { x:450, y: 540, act:'sit',  face:[0,-1] },
-         { x:620, y: 540, act:'chat', face:[-1,0] }
+         { x:610.1, y:684, act:'chat', face:[0.1,1] },
+         { x:566.8, y:888.8, act:'sit', face:[0.5,-0.9] },
+         { x:563.9, y:852.3, act:'chat', face:[0.7,-0.7] }
        ] }
 };
 
@@ -438,9 +474,11 @@ const ROUND_NPCS = [
 ];
 
 // 按局数缩放 NPC 感知能力。
-// 实测（无头浏览器跑真实游戏代码）：不缩放时第 1 局机器人只过 2/5，"保送"没做到。
-// 第 1 局把视野压到 72% —— 同事·老王视野 190→137，玩家站在工位区中间就不会被看见了。
 // rationale：首局的目的是「教会玩家看视野锥」，不是「考住他」。
+//
+// ⚠️ 下面这组系数（第 1 局 0.94）是【旧地图】实测出来的，当时的注释引用的是更早的 72%/视野190。
+//    地图已经重做成椭圆环道，视野也全换了一轮 —— 也就是说：
+//    「第 1 局到底算不算保送」这项验证已经作废，需要用新地图重跑一遍。
 const ROUND_TUNING = [
   { vision:0.94, speed:0.96, alert:1.2 },   // 第 1 局 · 西走廊 + 漏斗口
   { vision:0.90, speed:0.94, alert:1.1 },   // 第 2 局 · 两条走廊同时有人，软一档
@@ -488,28 +526,6 @@ function segRect(x1,y1,x2,y2,r){
   return true;
 }
 
-// 玩家中心是否可站（房间并集内 + 不压家具）
-function walkable(x,y){
-  if(x < BOUND.x+INSET || x > BOUND.x+BOUND.w-INSET) return false;
-  if(y < BOUND.y+INSET || y > BOUND.y+BOUND.h-INSET) return false;
-  for(const w of WALLS){
-    const bb=w.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
-    if(distPoly(x,y,w) < WALL_T/2 + 11) return false;   // 墙体：留出半个身位
-  }
-  for(const c of COVERS) if(x>c.x-9 && x<c.x+c.w+9 && y>c.y-9 && y<c.y+c.h+9) return false;
-  for(const p of PILLARS) if(Math.hypot(x-p.x, y-p.y) < p.r + 10) return false;
-  return true;
-}
-
-// 点属于哪个房间（用于视线遮挡：不在同一房间 = 被墙挡住）
-function roomOf(x,y){
-  if(x<BOUND.x || x>BOUND.x+BOUND.w) return null;
-  for(const z of ZONES) if(y>=z.y0 && y<z.y1) return z.id;
-  return null;
-}
-function zoneName(id){ const z = ZONES.find(z=>z.id===id); return z ? z.name : '楼道'; }
-
-function inRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
 
 // 线段与矩形是否相交（Liang-Barsky）
 function segRect(x1,y1,x2,y2,r){
@@ -528,26 +544,12 @@ function segRect(x1,y1,x2,y2,r){
   return true;
 }
 
-// 玩家中心是否可站（房间并集内 + 不压家具）
-function walkable(x,y){
-  if(x < BOUND.x+INSET || x > BOUND.x+BOUND.w-INSET) return false;
-  if(y < BOUND.y+INSET || y > BOUND.y+BOUND.h-INSET) return false;
-  for(const w of WALLS){
-    const bb=w.bb; if(x<bb.x0||x>bb.x1||y<bb.y0||y>bb.y1) continue;
-    if(distPoly(x,y,w) < WALL_T/2 + 11) return false;   // 墙体：留出半个身位
-  }
-  for(const c of COVERS) if(x>c.x-9 && x<c.x+c.w+9 && y>c.y-9 && y<c.y+c.h+9) return false;
-  for(const p of PILLARS) if(Math.hypot(x-p.x, y-p.y) < p.r + 10) return false;
-  return true;
-}
+// 站得住吗：身位完整落在地板上，且不压家具
+// 用「八个方向采样」而不是「离墙多远」，因为它对弧墙 / 楔形房间一样成立
+function walkable(x,y){ return discOnFloor(x,y,INSET); }
 
-// 点属于哪个区域（只用于 HUD 显示和台词里的「在哪儿」）
-function roomOf(x,y){
-  if(x < BOUND.x || x > BOUND.x+BOUND.w) return null;
-  for(const z of ZONES) if(y >= z.y0 && y < z.y1) return z.id;
-  return null;
-}
-function zoneName(id){ const z = ZONES.find(z=>z.id===id); return z ? z.name : '楼道'; }
+// 沿用旧名字，实现已换成极坐标分区判定
+function roomOf(x,y){ return zoneAt(x,y); }
 
 /* ============================================================
    状态
@@ -675,36 +677,68 @@ function updateNpc(n, dt){
   n.phase += dt * n.speed * 0.16;
 }
 
-// 两点之间有没有被墙 / 家具 / 柱子挡住。墙用 8px 位图查，够快
+/* ---------- 可见域（视线自动铺满）----------
+   从眼睛出发，在视场角内均匀撒射线，每条一直走到撞墙为止，
+   把终点连起来就是【真实可见区】。
+   它会顺着弧墙拐弯、从门口铺进隔壁房间 —— 而不是一个固定宽度的矩形。
+   好处是「看得见」和「画出来的光」用的是同一个多边形，判定和渲染永远一致。 */
+const VIS_RAYS = 88;    // 视场角内撒多少条
+const VIS_STEP = 8;     // 每条射线每步走多远
+
+function visPoly(x, y, a, halfFov, range){
+  const pts = [];
+  for(let i=0;i<=VIS_RAYS;i++){
+    const ang = a - halfFov + (2*halfFov)*(i/VIS_RAYS);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    let hit = range;
+    for(let d=VIS_STEP; d<=range; d+=VIS_STEP){
+      if(isOpaque(x + ca*d, y + sa*d)){ hit = d; break; }
+    }
+    pts.push([ x + ca*hit, y + sa*hit ]);
+  }
+  return pts;
+}
+
+// 每个 NPC 缓存一份：站着不动的 NPC 每帧只算一次
+function npcVisPoly(n){
+  const a   = Math.atan2(n.dir.y, n.dir.x);
+  const vis = npcVision(n);
+  const key = (n.x|0)+','+(n.y|0)+','+((a*48)|0)+','+(vis|0);
+  if(n._vk === key) return n._vp;
+  n._vp = visPoly(n.x, n.y, a, (n.fov*D2R)/2, vis);
+  n._vk = key;
+  return n._vp;
+}
+
+function inPoly(px,py,pts){
+  let inside = false;
+  for(let i=0, j=pts.length-1; i<pts.length; j=i++){
+    const xi=pts[i][0], yi=pts[i][1], xj=pts[j][0], yj=pts[j][1];
+    if(((yi>py) !== (yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside = !inside;
+  }
+  return inside;
+}
+
+// 两点之间挡不挡（墙 + 家具统一查遮挡位图，一次查完）
 function blockedLine(x1,y1,x2,y2){
   const d = Math.hypot(x2-x1, y2-y1);
   const steps = Math.max(2, Math.ceil(d/9));
   for(let i=1;i<steps;i++){
     const t = i/steps;
-    const x = x1+(x2-x1)*t, y = y1+(y2-y1)*t;
-    if(isWall(x,y)) return true;
-    for(const c of COVERS) if(inRect(x,y,c)) return true;
-    for(const p of PILLARS) if(Math.hypot(x-p.x,y-p.y) < p.r) return true;
+    if(isOpaque(x1+(x2-x1)*t, y1+(y2-y1)*t)) return true;
   }
   return false;
 }
 
-// 该 NPC 此刻能否看见玩家
+
+// 该 NPC 此刻能否看见玩家 —— 判定直接用「渲染出来的那块可见区」
 function canSee(n){
-  if(n.down > 0) return false;                                          // 躺平中，看不见任何东西
-  // 不再限制「必须在同一个房间」—— 改成真实遮挡：墙、家具、柱子都会切断这条线
-  // 「正前方一条直线」：把玩家位置投影到朝向上，判断是否落在光束范围内
-  //   along = 沿朝向的距离（必须在 0 ~ 视野长度 之间）
-  //   side  = 垂直偏移（必须小于光束半宽）—— 这就是直角墙切不出来的那块
+  if(n.down > 0) return false;
   const dx = player.x-n.x, dy = player.y-n.y;
-  const along = dx*n.dir.x + dy*n.dir.y;
-  const side  = Math.abs(dx*(-n.dir.y) + dy*n.dir.x);
-  const range = npcVision(n);                    // 坐下办公时这条线会明显变短
-  const hw    = beamHalf(n);
-  if(along <= 0 || along > range) return false;
-  if(side > hw) return false;
-  if(blockedLine(n.x,n.y, player.x,player.y)) return false;   // 墙 / 家具 / 柱子挡
-  return true;
+  const range = npcVision(n);
+  if(dx*dx + dy*dy > range*range) return false;      // 便宜的圆判断先挡掉大半
+  if(dx*n.dir.x + dy*n.dir.y <= 0) return false;     // 背后的看不见
+  return inPoly(player.x, player.y, npcVisPoly(n));
 }
 
 /* ============================================================
@@ -1420,6 +1454,21 @@ function drawConfront(){
   }
 }
 
+// 椭圆扇形环路径（r0=0 时就是实心椭圆）。走廊、房间、门都是这个东西
+function sectorPath(r0, r1, a0, a1){
+  const p = new Path2D();
+  const A0 = a0*D2R, A1 = a1*D2R;
+  if(r1 <= 0) return p;
+  if(r0 <= 0){
+    p.ellipse(BLD.cx, BLD.cy, r1*BLD.rx, r1*BLD.ry, 0, A0, A1, false);
+  } else {
+    p.ellipse(BLD.cx, BLD.cy, r1*BLD.rx, r1*BLD.ry, 0, A0, A1, false);
+    p.ellipse(BLD.cx, BLD.cy, r0*BLD.rx, r0*BLD.ry, 0, A1, A0, true);
+  }
+  p.closePath();
+  return p;
+}
+
 function draw(){
   ctx.save();
   ctx.clearRect(0,0,W,H);
@@ -1428,89 +1477,84 @@ function draw(){
     ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
   }
 
-  /* 地面 / 墙：一整块地板 + 一道道圆头墙体 */
+  /* 地面 / 墙：椭圆环道办公楼。
+     墙不需要单独画 —— 它就是「没铺地板的地方」，所以只画地板，剩下的自动成墙。 */
   ctx.fillStyle = C.wall;
   ctx.fillRect(0,0,W,H);
-  ctx.fillStyle = C.floor;
-  roundRect(BOUND.x, BOUND.y, BOUND.w, BOUND.h, 28); ctx.fill();
 
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  for(const w of WALLS){
-    const path = new Path2D();
-    path.moveTo(w[0][0], w[0][1]);
-    for(let i=1;i<w.length;i++) path.lineTo(w[i][0], w[i][1]);
-    ctx.strokeStyle = '#8F8B7C'; ctx.lineWidth = WALL_T + 4; ctx.stroke(path);
-    ctx.strokeStyle = C.wall;    ctx.lineWidth = WALL_T;     ctx.stroke(path);
-  }
-  ctx.strokeStyle = '#8F8B7C'; ctx.lineWidth = 4;
-  roundRect(BOUND.x+2, BOUND.y+2, BOUND.w-4, BOUND.h-4, 27); ctx.stroke();
+  // 环形走廊（3/4 圆，两处断口）
+  ctx.fillStyle = C.floorAlt || '#EFEDE4';
+  for(const g of RING) ctx.fill(sectorPath(g.r0, g.r1, g.a0, g.a1));
+  ctx.fill(sectorPath(WING.r0, WING.r1, WING.a0, WING.a1));
+
+  // 五个房间 + 中庭
+  ctx.fillStyle = C.floor;
+  for(const r of ROOMS) ctx.fill(sectorPath(r.r0, r.r1, r.a0, r.a1));
+  ctx.fill(sectorPath(CORE.r0, CORE.r1, -180, 180));
+
+  // 门（把中间那圈墙挖开的那几段）
+  for(const d of DOORS) ctx.fill(sectorPath(d.r0, d.r1, d.a-d.half, d.a+d.half));
+
+  // 建筑外轮廓
+  ctx.beginPath();
+  ctx.ellipse(BLD.cx, BLD.cy, BLD.rx, BLD.ry, 0, 0, Math.PI*2);
+  ctx.strokeStyle = '#8F8B7C'; ctx.lineWidth = 5; ctx.stroke();
 
   /* 区域名 */
-  ctx.font = '500 15px -apple-system,"PingFang SC",sans-serif';
-  ctx.fillStyle = '#BDB9AA';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  for(const z of ZONES) ctx.fillText(z.name, BOUND.x + 16, z.y0 + 14);
+  ctx.font = '500 14px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = '#A8A495';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const R2D = 180/Math.PI;
+  for(const r of ROOMS){
+    const p = polar(0.825, ((r.a0+r.a1)/2)*D2R);
+    ctx.fillText(r.name, p[0], p[1]);
+  }
+  const pl = polar(0.80, 270*D2R);  ctx.fillText(WING.name, pl[0], pl[1]);
+  ctx.fillText(CORE.name, BLD.cx, BLD.cy);
+  ctx.font = '400 13px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = '#BDBAAB';
+  const pr = polar(0.55, 90*D2R);   ctx.fillText('环形走廊', pr[0], pr[1]);
 
-  /* 视野：正前方一条直线光束。用射线步进逐条算出被墙截断的位置，
-   拼成一个多边形 —— 走廊一弯，光束就在弯的地方断掉。 */
+  /* 视野：画的是【真实可见域多边形】—— 同一份数据也是判定用的那份 */
   for(const n of npcs){
     if(n.down > 0) continue;
-    const a = Math.atan2(n.dir.y, n.dir.x);
-    const danger = n.alert > 0.02;
     const vis = npcVision(n);
-    const hw  = beamHalf(n);
     const base = (n.kind==='boss') ? '226,75,74' : '239,159,39';
     const alpha = 0.30 + n.alert*0.34;
-    const cosA = Math.cos(a), sinA = Math.sin(a);
-    const pX = -sinA, pY = cosA;
-
-    const N = 10;
-    const far = [];
-    for(let i=0;i<=N;i++){
-      const off = -hw + (2*hw)*(i/N);
-      const ox = n.x + pX*off, oy = n.y + pY*off;
-      let hit = vis;
-      for(let d=10; d<=vis; d+=10){
-        if(isWall(ox+cosA*d, oy+sinA*d)){ hit = d; break; }
-      }
-      far.push([ox + cosA*hit, oy + sinA*hit]);
-    }
+    const danger = n.alert > 0.02;
+    const pts = npcVisPoly(n);
 
     ctx.beginPath();
-    ctx.moveTo(n.x + pX*(-hw), n.y + pY*(-hw));
-    for(const p of far) ctx.lineTo(p[0], p[1]);
-    ctx.lineTo(n.x + pX*hw, n.y + pY*hw);
+    ctx.moveTo(n.x, n.y);
+    for(const p of pts) ctx.lineTo(p[0], p[1]);
     ctx.closePath();
-    const g = ctx.createLinearGradient(n.x, n.y, n.x+cosA*vis, n.y+sinA*vis);
+    const g = ctx.createRadialGradient(n.x, n.y, 4, n.x, n.y, vis);
     g.addColorStop(0,    'rgba('+base+','+(alpha*0.95).toFixed(3)+')');
-    g.addColorStop(0.62, 'rgba('+base+','+(alpha*0.50).toFixed(3)+')');
+    g.addColorStop(0.62, 'rgba('+base+','+(alpha*0.46).toFixed(3)+')');
     g.addColorStop(1,    'rgba('+base+',0)');
     ctx.fillStyle = g;
     ctx.fill();
 
-    // 两条侧边线：把判定边界画出来
-    ctx.strokeStyle = danger ? 'rgba('+base+',0.72)' : 'rgba('+base+',0.30)';
-    ctx.lineWidth = danger ? 1.8 : 1.2;
-    ctx.beginPath();
-    ctx.moveTo(n.x + pX*(-hw), n.y + pY*(-hw)); ctx.lineTo(far[0][0], far[0][1]);
-    ctx.moveTo(n.x + pX*(hw),  n.y + pY*(hw));  ctx.lineTo(far[N][0], far[N][1]);
+    ctx.strokeStyle = danger ? 'rgba('+base+',0.62)' : 'rgba('+base+',0.26)';
+    ctx.lineWidth   = danger ? 1.6 : 1.1;
     ctx.stroke();
   }
 
-  /* 家具 */
+  /* 家具：也是扇形，贴合楔形房间（矩形桌子放在东西两侧会戳穿弧墙） */
   for(const c of COVERS){
-    ctx.fillStyle = C.cover;
-    roundRect(c.x, c.y, c.w, c.h, 6); ctx.fill();
-    ctx.strokeStyle = C.coverLine; ctx.lineWidth = 1; ctx.stroke();
+    const path = sectorPath(c.rr - c.rw/2, c.rr + c.rw/2, c.aa - c.aw/2, c.aa + c.aw/2);
+    ctx.fillStyle = C.cover;        ctx.fill(path);
+    ctx.strokeStyle = C.coverLine;  ctx.lineWidth = 1; ctx.stroke(path);
 
     if(c.t==='desk' || c.t==='sofa'){
-      ctx.strokeStyle = 'rgba(185,181,166,.85)';
-      ctx.beginPath();
+      // 桌面压线，跟着弧度走
+      ctx.strokeStyle = 'rgba(185,181,166,.85)'; ctx.lineWidth = 1;
       for(let i=1;i<3;i++){
-        const yy = c.y + c.h*i/3;
-        ctx.moveTo(c.x+8, yy); ctx.lineTo(c.x+c.w-8, yy);
+        const rr = c.rr - c.rw/2 + c.rw*(i/3);
+        const p0 = polar(rr, (c.aa - c.aw/2 + 1.5)*D2R);
+        const p1 = polar(rr, (c.aa + c.aw/2 - 1.5)*D2R);
+        ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.stroke();
       }
-      ctx.stroke();
     }
     if(c.t==='plant'){
       ctx.fillStyle = 'rgba(59,109,17,.20)';
@@ -1522,7 +1566,7 @@ function draw(){
     dressSurface(c);
   }
 
-  /* 承重柱：圆形，同时挡走位和挡视线 */
+  /* 承重柱：已废弃（原来是「拿圆柱强行挡视线」的临时手段）。数组为空，这里不会画任何东西 */
   for(const p of PILLARS){
     ctx.fillStyle = '#D8D5C9';
     ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
@@ -1912,7 +1956,7 @@ function loop(t){
 }
 
 resize();
-buildFloorMask();
+buildMasks();
 buildRound();
 show('ovStart');
 requestAnimationFrame(t=>{ last = t; loop(t); });
